@@ -1,0 +1,13 @@
+# Spacemit K1-X Banana Pi F3 device bazelrc
+#
+# Usage:
+#   ln -sf devices/spacemit/bananapi_f3/device.bazelrc device.bazelrc
+#   tools/bazel run //devices/spacemit/bananapi_f3:spacemit_k1x_dist
+#
+# Or with explicit device config:
+#   tools/bazel run --config=spacemit_k1x //devices/spacemit/bananapi_f3:spacemit_k1x_dist
+
+build:spacemit_k1x --//build/kernel/kleaf:config_repo=@config_repo
+
+# RISC-V specific settings
+build:spacemit_k1x --platforms=@platforms//cpu:riscv64

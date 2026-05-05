@@ -1,0 +1,652 @@
+# Copyright (C) 2025 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
+load(
+    "//build/kernel/kleaf:kernel.bzl",
+    "initramfs",
+    "kernel_build",
+    "kernel_modules_install",
+    "system_dlkm_image",
+    "vendor_dlkm_image",
+)
+load(
+    "//common:modules.bzl",
+    "get_gki_modules_list",
+    "get_kunit_modules_list",
+)
+
+# ============================================================
+# Vendor Boot modules (essential for first stage init - eMMC access)
+# These are loaded from ramdisk during early boot
+# Order matters for dependencies!
+# ============================================================
+SPACEMIT_VENDOR_BOOT_MODULES = [
+    # Clock (first - everything depends on it)
+    "spacemit-ccu-k1.ko",
+    # Reset (needed early)
+    "reset-spacemit.ko",
+    # Pinctrl (GPIO mux - needed for eMMC pins)
+    "pinctrl-k1.ko",
+    # GPIO
+    "gpio-spacemit-k1.ko",
+    # I2C (for PMIC)
+    "i2c-k1.ko",
+    # MFD (PMIC dependency)
+    "simple-mfd-i2c.ko",
+    # Regulator (PMIC - needed for eMMC power)
+    "spacemit-p1.ko",
+    # MMC/eMMC (boot device - CRITICAL)
+    "sdhci-of-k1.ko",
+    # RTC
+    "rtc-spacemit-p1.ko",
+    # Reboot
+    "spacemit-p1-reboot.ko",
+    # SoC: DRAM bus stub + DDR AXI bandwidth monitor.
+    # Must be available before DPU/HDMI so the interconnect = <&dram_range1>
+    # reference in the HDMI DT node resolves.
+    "k1x-dma-range.ko",
+    "spacemit_ddrbw.ko",
+    # DRM stack — moved here so HDMI is up earlier (lets HwComposer / SF
+    # start much sooner → bootanim has time to display).
+    "drm_dma_helper.ko",
+    "spacemit-drm.ko",
+    "spacemit_hdmi.ko",
+]
+
+# ============================================================
+# Vendor DLKM modules (loaded after boot from eMMC)
+# ============================================================
+SPACEMIT_VENDOR_DLKM_MODULES = [
+    # DMA
+    "mmp_pdma.ko",
+    # NOTE: drm_dma_helper / spacemit-drm / spacemit_hdmi /
+    # k1x-dma-range / spacemit_ddrbw moved to VENDOR_BOOT_MODULES so
+    # HDMI is ready early enough for SurfaceFlinger / bootanim to display.
+    "spacemit_mipi_panel.ko",
+    "lt8911exb.ko",
+    "lt9711.ko",
+    "raspberrypi_touchscreen.ko",
+    # Ethernet
+    "k1_emac.ko",
+    # I2C additional
+    "i2c-k1x.ko",
+    # SPI
+    "k1x-spi.ko",
+    "spi-k1x-qspi.ko",
+    # PCIe
+    "pci-pwrctrl-core.ko",
+    "pci-pwrctrl-slot.ko",
+    "pcie-spacemit-k1.ko",
+    # PWM
+    "pwm-dwc-k1pro.ko",
+    # Thermal
+    "k1x-thermal.ko",
+    # GPU (PowerVR upstream imagination driver) + dependencies
+    "drm_gpuvm.ko",
+    "drm_exec.ko",
+    "gpu-sched.ko",
+    "powervr.ko",
+    # Power Domains
+    # CPUfreq — builtin (=y), not module
+    # USB
+    # Combo PHY USB3+PCIe (must load before dwc3 for xHCI USB 3.0 init)
+    "phy-spacemit-k1x-combphy.ko",
+    "dwc3-spacemit.ko",
+    "phy-k1x-ci-usb2.ko",
+    "phy-k1x-ci-otg.ko",
+    "ehci-k1x-ci.ko",
+    "spacemit_onboard_hub.ko",
+    "k1x_udc_core.ko",
+    # Media/Camera
+    "cam_plat_v2.ko",
+    "cam_ccic_v2.ko",
+    "cam_vi_v2.ko",
+    "cam_isp_v2.ko",
+    "cam_cpp_v2.ko",
+    "cam_sensor_v2.ko",
+    "amvx.ko",
+    "svivi.ko",
+    "vcam_dbg.ko",
+    "snd-soc-es8326.ko",
+    "snd-soc-k1-i2s.ko",
+    "snd-soc-simple-card.ko",
+    "snd-soc-simple-card-utils.ko",
+]
+
+# ============================================================
+# Vendor Boot modules - Full paths for pkg_files reference
+# (kernel_build exposes modules by full path via :kernel_build/path)
+# ============================================================
+SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
+    "drivers/clk/spacemit/spacemit-ccu-k1.ko",
+    "drivers/reset/reset-spacemit.ko",
+    "drivers/pinctrl/spacemit/pinctrl-k1.ko",
+    "drivers/gpio/gpio-spacemit-k1.ko",
+    "drivers/i2c/busses/i2c-k1.ko",
+    "drivers/mfd/simple-mfd-i2c.ko",
+    "drivers/regulator/spacemit-p1.ko",
+    "drivers/mmc/host/sdhci-of-k1.ko",
+    "drivers/rtc/rtc-spacemit-p1.ko",
+    "drivers/power/reset/spacemit-p1-reboot.ko",
+    # SoC + DRM stack moved from vendor_dlkm to vendor_boot
+    "drivers/soc/spacemit/k1x-dma-range.ko",
+    "drivers/soc/spacemit/ddr-bw/spacemit_ddrbw.ko",
+    "drivers/gpu/drm/drm_dma_helper.ko",
+    "drivers/gpu/drm/spacemit/spacemit-drm.ko",
+    "drivers/gpu/drm/spacemit/spacemit_hdmi.ko",
+]
+
+# ============================================================
+# Vendor DLKM modules - Full paths for pkg_files reference
+# ============================================================
+SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
+    "drivers/dma/mmp_pdma.ko",
+    # k1x-dma-range / spacemit_ddrbw / drm_dma_helper / spacemit-drm /
+    # spacemit_hdmi moved to VENDOR_BOOT_MODULES_PATHS for early load.
+    "drivers/gpu/drm/spacemit/spacemit_mipi_panel.ko",
+    "drivers/gpu/drm/spacemit/lt8911exb.ko",
+    "drivers/gpu/drm/spacemit/lt9711.ko",
+    "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    "drivers/net/ethernet/spacemit/k1_emac.ko",
+    "drivers/i2c/busses/i2c-k1x.ko",
+    "drivers/spi/k1x-spi.ko",
+    "drivers/spi/spi-k1x-qspi.ko",
+    "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
+    "drivers/pci/pwrctrl/pci-pwrctrl-slot.ko",
+    "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
+    "drivers/pwm/pwm-dwc-k1pro.ko",
+    "drivers/thermal/k1x-thermal.ko",
+    "drivers/gpu/drm/drm_gpuvm.ko",
+    "drivers/gpu/drm/drm_exec.ko",
+    "drivers/gpu/drm/scheduler/gpu-sched.ko",
+    "drivers/gpu/drm/imagination/powervr.ko",
+    "drivers/phy/spacemit/phy-spacemit-k1x-combphy.ko",
+    "drivers/usb/dwc3/dwc3-spacemit.ko",
+    "drivers/usb/phy/phy-k1x-ci-usb2.ko",
+    "drivers/usb/phy/phy-k1x-ci-otg.ko",
+    "drivers/usb/host/ehci-k1x-ci.ko",
+    "drivers/usb/misc/spacemit_onboard_hub.ko",
+    "drivers/usb/gadget/udc/k1x_udc_core.ko",
+    "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_ccic_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_vi_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_isp_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_cpp_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_sensor_v2.ko",
+    "drivers/media/platform/spacemit/vpu_k1x/amvx.ko",
+    "drivers/media/platform/spacemit/virtual_camera/svivi.ko",
+    "drivers/media/platform/spacemit/virtual_camera/vcam_dbg.ko",
+    "sound/soc/codecs/snd-soc-es8326.ko",
+    "sound/soc/spacemit/snd-soc-k1-i2s.ko",
+    "sound/soc/generic/snd-soc-simple-card.ko",
+    "sound/soc/generic/snd-soc-simple-card-utils.ko",
+]
+
+# ============================================================
+# Full paths for kernel_build module_outs
+# ============================================================
+SPACEMIT_IN_TREE_MODULES = [
+    # Vendor boot modules (needed for eMMC access during early boot)
+    # Clock
+    "drivers/clk/spacemit/spacemit-ccu-k1.ko",
+    # Reset
+    "drivers/reset/reset-spacemit.ko",
+    # Pinctrl
+    "drivers/pinctrl/spacemit/pinctrl-k1.ko",
+    # GPIO
+    "drivers/gpio/gpio-spacemit-k1.ko",
+    # I2C
+    "drivers/i2c/busses/i2c-k1.ko",
+    # MFD
+    "drivers/mfd/simple-mfd-i2c.ko",
+    # Regulator
+    "drivers/regulator/spacemit-p1.ko",
+    # MMC (CRITICAL for eMMC)
+    "drivers/mmc/host/sdhci-of-k1.ko",
+    # RTC
+    "drivers/rtc/rtc-spacemit-p1.ko",
+    # Reboot
+    "drivers/power/reset/spacemit-p1-reboot.ko",
+    # Vendor DLKM modules (loaded after boot)
+    # I2C additional
+    "drivers/i2c/busses/i2c-k1x.ko",
+    # DMA
+    "drivers/dma/mmp_pdma.ko",
+    # SoC: DRAM bus stub + DDR AXI bandwidth monitor + chip info
+    "drivers/soc/spacemit/k1x-dma-range.ko",
+    "drivers/soc/spacemit/ddr-bw/spacemit_ddrbw.ko",
+    "drivers/soc/spacemit/spacemit-socinfo.ko",
+    # eFuse
+    "drivers/nvmem/spacemit-efuse.ko",
+    # Reboot - SoC boot-mode register (in addition to spacemit-p1 PMIC)
+    "drivers/power/reset/spacemit-k1x-reboot.ko",
+    # DRM
+    "drivers/gpu/drm/drm_dma_helper.ko",
+    "drivers/gpu/drm/spacemit/spacemit-drm.ko",
+    "drivers/gpu/drm/spacemit/spacemit_mipi_panel.ko",
+    "drivers/gpu/drm/spacemit/spacemit_hdmi.ko",
+    "drivers/gpu/drm/spacemit/lt8911exb.ko",
+    "drivers/gpu/drm/spacemit/lt9711.ko",
+    "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    # Ethernet
+    "drivers/net/ethernet/spacemit/k1_emac.ko",
+    # SPI
+    "drivers/spi/k1x-spi.ko",
+    "drivers/spi/spi-k1x-qspi.ko",
+    # PCIe
+    "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
+    "drivers/pci/pwrctrl/pci-pwrctrl-slot.ko",
+    "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
+    # PWM
+    "drivers/pwm/pwm-dwc-k1pro.ko",
+    # Thermal
+    "drivers/thermal/k1x-thermal.ko",
+    # GPU (PowerVR upstream) + dependencies
+    "drivers/gpu/drm/drm_gpuvm.ko",
+    "drivers/gpu/drm/drm_exec.ko",
+    "drivers/gpu/drm/scheduler/gpu-sched.ko",
+    "drivers/gpu/drm/imagination/powervr.ko",
+    # Power Domains
+    # CPUfreq — builtin (=y)
+    # USB
+    # Combo PHY USB3+PCIe (must load before dwc3 to fix xHCI -110 timeout)
+    "drivers/phy/spacemit/phy-spacemit-k1x-combphy.ko",
+    "drivers/usb/dwc3/dwc3-spacemit.ko",
+    "drivers/usb/phy/phy-k1x-ci-usb2.ko",
+    "drivers/usb/phy/phy-k1x-ci-otg.ko",
+    "drivers/usb/host/ehci-k1x-ci.ko",
+    "drivers/usb/misc/spacemit_onboard_hub.ko",
+    "drivers/usb/gadget/udc/k1x_udc_core.ko",
+    # Media/Camera
+    "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_ccic_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_vi_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_isp_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_cpp_v2.ko",
+    "drivers/media/platform/spacemit/camera/cam_sensor_v2.ko",
+    "drivers/media/platform/spacemit/vpu_k1x/amvx.ko",
+    "drivers/media/platform/spacemit/virtual_camera/svivi.ko",
+    "drivers/media/platform/spacemit/virtual_camera/vcam_dbg.ko",
+    # Sound
+    "sound/soc/codecs/snd-soc-es8326.ko",
+    "sound/soc/spacemit/snd-soc-k1-i2s.ko",
+    "sound/soc/generic/snd-soc-simple-card.ko",
+    "sound/soc/generic/snd-soc-simple-card-utils.ko",
+]
+
+# ============================================================
+# Filegroups for SELinux contexts
+# ============================================================
+filegroup(
+    name = "system_file_contexts",
+    srcs = ["selinux/system_file_contexts"],
+)
+
+filegroup(
+    name = "file_contexts",
+    srcs = ["selinux/file_contexts"],
+)
+
+# ============================================================
+# Kernel Build
+# ============================================================
+kernel_build(
+    name = "spacemit_k1x",
+    srcs = ["//common:kernel_riscv64_sources"],
+    outs = [
+        "Image",
+        "Image.gz",
+        "System.map",
+        "modules.builtin",
+        "modules.builtin.modinfo",
+        "vmlinux",
+        "vmlinux.symvers",
+        # Device Tree Blobs
+        "arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dtb",
+    ],
+    arch = "riscv64",
+    ddk_module_headers = ["//common:all_headers_riscv64"],
+    defconfig = "//common:arch/riscv/configs/gki_defconfig",
+    make_goals = [
+        "Image",
+        "Image.gz",
+        "modules",
+        "spacemit/k1-bananapi-f3.dtb",
+    ],
+    makefile = "//common:Makefile",
+    module_outs = get_gki_modules_list("riscv64") +
+                  get_kunit_modules_list("riscv64") +
+                  SPACEMIT_IN_TREE_MODULES,
+    pre_defconfig_fragments = [":spacemit_k1x.fragment"],
+    strip_modules = True,
+    visibility = ["//visibility:public"],
+)
+
+# ============================================================
+# Modules Install
+# ============================================================
+kernel_modules_install(
+    name = "spacemit_k1x_modules_install",
+    kernel_build = ":spacemit_k1x",
+)
+
+# ============================================================
+# Module Lists (for Android module loading)
+# ============================================================
+write_file(
+    name = "spacemit_k1x_system_dlkm_modules_list",
+    out = "system_dlkm_modules_list",
+    content = get_gki_modules_list("riscv64"),
+)
+
+write_file(
+    name = "spacemit_k1x_vendor_dlkm_modules_list",
+    out = "vendor_dlkm_modules.spacemit",
+    content = SPACEMIT_VENDOR_DLKM_MODULES,
+)
+
+write_file(
+    name = "spacemit_k1x_vendor_boot_modules_list",
+    out = "vendor_boot_modules.spacemit",
+    content = SPACEMIT_VENDOR_BOOT_MODULES,
+)
+
+# ============================================================
+# Initramfs (vendor_boot ramdisk)
+# ============================================================
+initramfs(
+    name = "spacemit_k1x_initramfs",
+    kernel_modules_install = ":spacemit_k1x_modules_install",
+    ramdisk_compression = "lz4",
+    deps = [":file_contexts"],
+    modules_list = ":spacemit_k1x_vendor_boot_modules_list",
+    vendor_boot_name = "vendor_boot",
+)
+
+# ============================================================
+# Vendor DLKM image (ext4 partition with vendor modules)
+# ============================================================
+vendor_dlkm_image(
+    name = "spacemit_k1x_vendor_dlkm_image",
+    build_flatten = True,
+    kernel_modules_install = ":spacemit_k1x_modules_install",
+    modules_list = ":spacemit_k1x_vendor_dlkm_modules_list",
+    deps = [":file_contexts"],
+)
+
+# NOTE: system_dlkm_image requires a base GKI system_dlkm which isn't
+# available for RISC-V yet. GKI modules are included in modules_install.
+# System DLKM partition will be created by Android build using modules_list.
+
+# ============================================================
+# GKI modules list (for system_dlkm)
+# Defined directly because our modules.bzl returns select()
+# which can't be iterated. Matches _COMMON_GKI_MODULES_LIST.
+# ============================================================
+SPACEMIT_GKI_MODULES = [
+    # keep sorted
+    "drivers/block/virtio_blk.ko",
+    "drivers/block/zram/zram.ko",
+    "drivers/bluetooth/btbcm.ko",
+    "drivers/bluetooth/btqca.ko",
+    "drivers/bluetooth/btsdio.ko",
+    "drivers/bluetooth/hci_uart.ko",
+    "drivers/char/virtio_console.ko",
+    "drivers/gnss/gnss.ko",
+    "drivers/misc/vcpu_stall_detector.ko",
+    "drivers/net/can/dev/can-dev.ko",
+    "drivers/net/can/slcan/slcan.ko",
+    "drivers/net/can/vcan.ko",
+    "drivers/net/macsec.ko",
+    "drivers/net/mii.ko",
+    "drivers/net/ppp/bsd_comp.ko",
+    "drivers/net/ppp/ppp_deflate.ko",
+    "drivers/net/ppp/ppp_generic.ko",
+    "drivers/net/ppp/ppp_mppe.ko",
+    "drivers/net/ppp/pppox.ko",
+    "drivers/net/ppp/pptp.ko",
+    "drivers/net/slip/slhc.ko",
+    "drivers/net/usb/aqc111.ko",
+    "drivers/net/usb/asix.ko",
+    "drivers/net/usb/ax88179_178a.ko",
+    "drivers/net/usb/cdc_eem.ko",
+    "drivers/net/usb/cdc_ether.ko",
+    "drivers/net/usb/cdc_ncm.ko",
+    "drivers/net/usb/r8152.ko",
+    "drivers/net/usb/r8153_ecm.ko",
+    "drivers/net/usb/rtl8150.ko",
+    "drivers/net/usb/usbnet.ko",
+    "drivers/net/wwan/wwan.ko",
+    "drivers/power/sequencing/pwrseq-core.ko",
+    "drivers/pps/pps_core.ko",
+    "drivers/ptp/ptp.ko",
+    "drivers/thunderbolt/thunderbolt.ko",
+    "drivers/usb/class/cdc-acm.ko",
+    "drivers/usb/mon/usbmon.ko",
+    "drivers/usb/serial/ftdi_sio.ko",
+    "drivers/usb/serial/usbserial.ko",
+    "drivers/virtio/virtio_balloon.ko",
+    "drivers/virtio/virtio_pci.ko",
+    "drivers/virtio/virtio_pci_legacy_dev.ko",
+    "drivers/virtio/virtio_pci_modern_dev.ko",
+    "fs/netfs/netfs.ko",
+    "kernel/kheaders.ko",
+    "lib/crc/crc-ccitt.ko",
+    "lib/crypto/libarc4.ko",
+    "mm/zsmalloc.ko",
+    "net/6lowpan/6lowpan.ko",
+    "net/6lowpan/nhc_dest.ko",
+    "net/6lowpan/nhc_fragment.ko",
+    "net/6lowpan/nhc_hop.ko",
+    "net/6lowpan/nhc_ipv6.ko",
+    "net/6lowpan/nhc_mobility.ko",
+    "net/6lowpan/nhc_routing.ko",
+    "net/6lowpan/nhc_udp.ko",
+    "net/8021q/8021q.ko",
+    "net/9p/9pnet.ko",
+    "net/9p/9pnet_fd.ko",
+    "net/bluetooth/bluetooth.ko",
+    "net/bluetooth/hidp/hidp.ko",
+    "net/bluetooth/rfcomm/rfcomm.ko",
+    "net/can/can.ko",
+    "net/can/can-bcm.ko",
+    "net/can/can-gw.ko",
+    "net/can/can-raw.ko",
+    "net/ieee802154/6lowpan/ieee802154_6lowpan.ko",
+    "net/ieee802154/ieee802154.ko",
+    "net/ieee802154/ieee802154_socket.ko",
+    "net/l2tp/l2tp_core.ko",
+    "net/l2tp/l2tp_ppp.ko",
+    "net/mac802154/mac802154.ko",
+    "net/nfc/nfc.ko",
+    "net/rfkill/rfkill.ko",
+    "net/tipc/tipc.ko",
+    "net/tipc/tipc_diag.ko",
+    "net/tls/tls.ko",
+    "net/vmw_vsock/vmw_vsock_virtio_transport.ko",
+]
+
+# ============================================================
+# Package files for distribution
+# ============================================================
+
+# Kernel images and base files from kernel_build
+pkg_files(
+    name = "spacemit_k1x_pkg_files",
+    srcs = [":spacemit_k1x"],
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# ============================================================
+# Genrules to extract individual modules from kernel_build outputs
+# Outputs individual .ko files directly (no tar archives)
+# so pkg_install copies them as-is to the dist directory
+# ============================================================
+
+# Extract vendor boot modules (essential for first stage init)
+genrule(
+    name = "spacemit_k1x_vendor_boot_modules_filtered",
+    srcs = [":spacemit_k1x"],
+    outs = ["ramdisk_ko/" + mod for mod in SPACEMIT_VENDOR_BOOT_MODULES],
+    cmd = """
+        declare -A MODMAP
+        for f in $(SRCS); do
+            b=$$(basename "$$f")
+            [[ "$$b" == *.ko ]] && MODMAP["$$b"]="$$f"
+        done
+        for out in $(OUTS); do
+            modname=$$(basename "$$out")
+            src="$${MODMAP[$$modname]:-}"
+            if [ -n "$$src" ]; then
+                cp "$$src" "$$out"
+            else
+                echo "ERROR: Module $$modname not found in kernel build" >&2
+                exit 1
+            fi
+        done
+    """,
+)
+
+# Extract vendor DLKM modules (loaded after boot from eMMC)
+genrule(
+    name = "spacemit_k1x_vendor_dlkm_modules_filtered",
+    srcs = [":spacemit_k1x"],
+    outs = ["vendor_dlkm_ko/" + mod for mod in SPACEMIT_VENDOR_DLKM_MODULES],
+    cmd = """
+        declare -A MODMAP
+        for f in $(SRCS); do
+            b=$$(basename "$$f")
+            [[ "$$b" == *.ko ]] && MODMAP["$$b"]="$$f"
+        done
+        for out in $(OUTS); do
+            modname=$$(basename "$$out")
+            src="$${MODMAP[$$modname]:-}"
+            if [ -n "$$src" ]; then
+                cp "$$src" "$$out"
+            else
+                echo "ERROR: Module $$modname not found in kernel build" >&2
+                exit 1
+            fi
+        done
+    """,
+)
+
+# Extract system DLKM modules (GKI modules)
+genrule(
+    name = "spacemit_k1x_system_dlkm_modules_filtered",
+    srcs = [":spacemit_k1x"],
+    outs = ["system_dlkm_ko/" + mod.split("/")[-1] for mod in SPACEMIT_GKI_MODULES],
+    cmd = """
+        declare -A MODMAP
+        for f in $(SRCS); do
+            b=$$(basename "$$f")
+            [[ "$$b" == *.ko ]] && MODMAP["$$b"]="$$f"
+        done
+        for out in $(OUTS); do
+            modname=$$(basename "$$out")
+            src="$${MODMAP[$$modname]:-}"
+            if [ -n "$$src" ]; then
+                cp "$$src" "$$out"
+            else
+                echo "ERROR: Module $$modname not found in kernel build" >&2
+                exit 1
+            fi
+        done
+    """,
+)
+
+# Package individual .ko files for distribution
+pkg_files(
+    name = "spacemit_k1x_vendor_boot_modules_pkg_files",
+    srcs = [":spacemit_k1x_vendor_boot_modules_filtered"],
+    prefix = "ramdisk",
+    strip_prefix = strip_prefix.files_only(),
+)
+
+pkg_files(
+    name = "spacemit_k1x_vendor_dlkm_modules_pkg_files",
+    srcs = [":spacemit_k1x_vendor_dlkm_modules_filtered"],
+    prefix = "vendor_dlkm",
+    strip_prefix = strip_prefix.files_only(),
+)
+
+pkg_files(
+    name = "spacemit_k1x_system_dlkm_modules_pkg_files",
+    srcs = [":spacemit_k1x_system_dlkm_modules_filtered"],
+    prefix = "system_dlkm",
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# ============================================================
+# Image files (for reference/verification)
+# ============================================================
+
+# Vendor DLKM image (.img file)
+pkg_files(
+    name = "spacemit_k1x_vendor_dlkm_image_pkg_files",
+    srcs = [":spacemit_k1x_vendor_dlkm_image"],
+    prefix = "vendor_dlkm",
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# Initramfs image
+pkg_files(
+    name = "spacemit_k1x_initramfs_pkg_files",
+    srcs = [":spacemit_k1x_initramfs"],
+    prefix = "initramfs",
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# Module lists (for Android to organize modules)
+pkg_files(
+    name = "spacemit_k1x_module_lists_pkg_files",
+    srcs = [
+        ":spacemit_k1x_system_dlkm_modules_list",
+        ":spacemit_k1x_vendor_dlkm_modules_list",
+        ":spacemit_k1x_vendor_boot_modules_list",
+    ],
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# Modules install (all modules at root - flat)
+pkg_files(
+    name = "spacemit_k1x_modules_pkg_files",
+    srcs = [":spacemit_k1x_modules_install"],
+    strip_prefix = strip_prefix.files_only(),
+)
+
+# ============================================================
+# Distribution target
+# ============================================================
+pkg_install(
+    name = "spacemit_k1x_dist",
+    srcs = [
+        # Kernel images and all modules at root
+        ":spacemit_k1x_pkg_files",
+        ":spacemit_k1x_modules_pkg_files",
+        # Actual .ko files in directories (like TI)
+        ":spacemit_k1x_vendor_boot_modules_pkg_files",
+        ":spacemit_k1x_vendor_dlkm_modules_pkg_files",
+        ":spacemit_k1x_system_dlkm_modules_pkg_files",
+        # Images
+        ":spacemit_k1x_vendor_dlkm_image_pkg_files",
+        ":spacemit_k1x_initramfs_pkg_files",
+        # Module lists
+        ":spacemit_k1x_module_lists_pkg_files",
+    ],
+    destdir = "out/spacemit_k1x/dist",
+)

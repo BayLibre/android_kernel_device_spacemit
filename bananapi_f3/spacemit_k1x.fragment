@@ -1,0 +1,251 @@
+# Spacemit K1-X Fragment Config pour Android GKI
+# Base: arch/riscv/configs/gki_defconfig
+#
+# Usage:
+#   ./scripts/kconfig/merge_config.sh arch/riscv/configs/gki_defconfig arch/riscv/configs/spacemit_k1x.fragment
+#
+# Principe: TOUS les drivers en module (=m)
+# L'initramfs Android charge les modules essentiels pour boot (clock, pinctrl, mmc, etc.)
+# ARCH_SPACEMIT est builtin dans gki_defconfig
+
+# ============================================================
+# SoC Selection - Already in gki_defconfig
+# ============================================================
+# CONFIG_ARCH_SPACEMIT=y  <- Dans gki_defconfig
+# CONFIG_ARCH_SUNXI is not set  <- Optionnel, désactiver si non utilisé
+
+# ============================================================
+# Android mandatory configs missing from GKI defconfig
+# ============================================================
+# Cgroups
+CONFIG_CGROUP_PIDS=y
+CONFIG_PROC_PID_CPUSET=y
+
+# Device nodes
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# Crypto (android-base.config)
+CONFIG_CRYPTO_NULL=y
+
+# Netfilter (android-base.config)
+CONFIG_IP_NF_MATCH_RPFILTER=y
+
+# tmpfs SELinux support
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_TMPFS_XATTR=y
+
+# RISC-V specific
+# CONFIG_RISCV_EFFICIENT_UNALIGNED_ACCESS=y is already in gki_defconfig
+# CONFIG_RISCV_SCALAR_MISALIGNED=y added to gki_defconfig (K1 X60 needs FP misaligned trap handler)
+# K1 X60 does NOT support misaligned vector stores
+# Kernel patched (traps_misaligned.c) to emulate vse8/16/32/64 in trap handler
+
+# TLS (required by GKI modules list - net/tls/tls.ko)
+CONFIG_TLS=m
+
+# VKMS disabled — real GPU (PowerVR) and DPU (SpacemiT HDMI) available
+# CONFIG_DRM_VKMS is not set
+
+# PowerVR GPU — upstream imagination driver (for Mesa)
+# CONFIG_POWERVR_ROGUE is not set
+CONFIG_DRM_POWERVR=m
+
+# DMA-BUF heaps (needed by minigbm/gralloc for buffer allocation)
+CONFIG_DMABUF_HEAPS_SYSTEM=y
+CONFIG_DMABUF_HEAPS_CMA=y
+
+# Serial console — GKI defaults to RUNTIME_UARTS=0 which means no ttyS* ports
+# are pre-allocated at boot. The 8250_of driver then fails to register because
+# uart_add_one_port cannot match console=ttyS0. Set to 4 for K1 UARTs.
+CONFIG_SERIAL_8250_RUNTIME_UARTS=4
+
+# ============================================================
+# Clock Drivers (module - chargé depuis initramfs)
+# ============================================================
+CONFIG_SPACEMIT_CCU=m
+CONFIG_SPACEMIT_K1_CCU=m
+
+# ============================================================
+# Pinctrl (module - chargé depuis initramfs)
+# ============================================================
+CONFIG_PINCTRL_SPACEMIT_K1=m
+
+# ============================================================
+# GPIO (module - chargé depuis initramfs)
+# ============================================================
+CONFIG_GPIO_SPACEMIT_K1=m
+
+# ============================================================
+# Reset Controller (module - chargé depuis initramfs)
+# ============================================================
+CONFIG_RESET_SPACEMIT=m
+
+# ============================================================
+# MMC/SD/eMMC (module - chargé depuis initramfs)
+# ============================================================
+CONFIG_MMC_SDHCI_OF_K1=m
+
+# ============================================================
+# Ethernet (module)
+# ============================================================
+CONFIG_SPACEMIT_K1_EMAC=m
+
+# ============================================================
+# I2C (module)
+# ============================================================
+CONFIG_I2C_K1=m
+CONFIG_I2C_K1X=m
+
+# ============================================================
+# SPI (module)
+# ============================================================
+CONFIG_SPI_K1X=m
+CONFIG_SPI_K1X_QSPI=m
+
+# ============================================================
+# UART - Using existing 8250 driver
+# ============================================================
+# Already enabled in gki_defconfig:
+# CONFIG_SERIAL_8250=y
+# CONFIG_SERIAL_8250_DW=y
+
+# ============================================================
+# Early console via RISC-V SBI (required for earlycon=sbi)
+# ============================================================
+CONFIG_SERIAL_EARLYCON_RISCV_SBI=y
+
+# ============================================================
+# PCIe (module)
+# ============================================================
+CONFIG_PCIE_SPACEMIT_K1=m
+
+# ============================================================
+# PWM (module)
+# ============================================================
+CONFIG_PWM_K1=m
+
+# ============================================================
+# Thermal (module)
+# ============================================================
+CONFIG_K1X_THERMAL=m
+
+# ============================================================
+# CPU Freq (module)
+# ============================================================
+CONFIG_SPACEMIT_K1X_CPUFREQ=m
+
+# ============================================================
+# DMA (module)
+# ============================================================
+CONFIG_MMP_PDMA=m
+# CONFIG_SPACEMIT_PDMA is not set
+
+# ============================================================
+# USB (module) - Ported from Buildroot
+# ============================================================
+CONFIG_USB_DWC3_SPACEMIT=m
+CONFIG_USB_PHY_K1X_CI_USB2=m
+CONFIG_USB_PHY_K1X_CI_OTG=m
+CONFIG_USB_EHCI_K1X_CI=m
+CONFIG_USB_SPACEMIT_ONBOARD_HUB=m
+CONFIG_USB_K1X_UDC=m
+# Combo PHY for PCIe/USB3 (required for xHCI to come out of init -110 timeout)
+CONFIG_PHY_SPACEMIT_K1X_COMBPHY=m
+
+# ============================================================
+# GPU/DRM (module) - Ported from Buildroot
+# ============================================================
+CONFIG_DRM_SPACEMIT=m
+CONFIG_SPACEMIT_MIPI_PANEL=m
+CONFIG_SPACEMIT_HDMI=m
+CONFIG_DRM_LT8911EXB=m
+CONFIG_DRM_LT9711=m
+CONFIG_DRM_RASPBERRYPI_TOUCHSCREEN=m
+# IMG Rogue GPU driver - external module in devices/spacemit/modules/img-rogue/
+# CONFIG_DRM_POWERVR=m  <- upstream driver, NOT compatible with K1-X GPU
+# CONFIG_POWERVR_ROGUE will be built as external ddk_module
+
+# ============================================================
+# Media/Camera (module) - Ported from Buildroot
+# ============================================================
+CONFIG_SPACEMIT_K1X_CAMERA_V2=m
+CONFIG_SPACEMIT_K1X_CCIC_V2=m
+CONFIG_SPACEMIT_K1X_VI_V2=m
+CONFIG_SPACEMIT_K1X_ISP_V2=m
+CONFIG_SPACEMIT_K1X_CPP_V2=m
+CONFIG_SPACEMIT_K1X_SENSOR_V2=m
+CONFIG_VIDEO_LINLON_K1X=m
+CONFIG_SPACEMIT_K1X_VIR_CAMERA=m
+
+# ============================================================
+# Power Domains
+# ============================================================
+CONFIG_SPACEMIT_PM_DOMAINS=y
+
+# ============================================================
+# CPUFreq
+# ============================================================
+CONFIG_CPUFREQ_DT=y
+CONFIG_SPACEMIT_K1X_CPUFREQ=y
+
+# ============================================================
+# Audio
+# ============================================================
+CONFIG_SND_SOC_K1_I2S=m
+CONFIG_SND_SOC_ES8326=m
+CONFIG_SND_SIMPLE_CARD=m
+
+# ============================================================
+# SoC drivers - Requires driver porting from Buildroot
+# ============================================================
+# CONFIG_SPACEMIT_PM_DOMAINS=y
+# CONFIG_SPACEMIT_RF=m
+CONFIG_SPACEMIT_DDR_BW=m
+# k1x dram-range stub: registers spacemit-dram-bus compatible so that
+# of_platform instantiates dram_range_* nodes (referenced via interconnect)
+CONFIG_SPACEMIT_K1X_DMA_RANGE=m
+
+# ============================================================
+# Crypto - Requires driver porting from Buildroot
+# ============================================================
+# CONFIG_CRYPTO_DEV_SPACEMIT=m
+
+# ============================================================
+# Remoteproc/Mailbox - Requires driver porting from Buildroot
+# ============================================================
+# CONFIG_SPACEMIT_REMOTEPROC=m
+# CONFIG_SPACEMIT_MAILBOX=m
+
+# ============================================================
+# eFuse / SoC info (ported from Buildroot)
+# ============================================================
+CONFIG_NVMEM_SPACEMIT_EFUSE=m
+CONFIG_SPACEMIT_SOCINFO=m
+
+# ============================================================
+# Misc drivers - Requires driver porting from Buildroot
+# ============================================================
+# CONFIG_SPACEMIT_WATCHDOG=m
+# CONFIG_SPACEMIT_ADC=m
+# CONFIG_SPACEMIT_PWRKEY=m
+# CONFIG_MFD_SPACEMIT=m
+# CONFIG_REGULATOR_SPACEMIT=m
+# CONFIG_EXTCON_K1XCI=m
+# CONFIG_HW_RANDOM_SPACEMIT=m
+
+# ============================================================
+# RTC - spacemit-p1 already in Android kernel
+# ============================================================
+CONFIG_RTC_DRV_SPACEMIT_P1=m
+
+# ============================================================
+# Regulator - spacemit-p1 already in Android kernel (module)
+# ============================================================
+CONFIG_REGULATOR_SPACEMIT_P1=m
+
+# ============================================================
+# Reboot - p1 PMIC poweroff + k1x SoC boot-mode register
+# ============================================================
+CONFIG_POWER_RESET_SPACEMIT_K1X=m
+CONFIG_POWER_RESET_SPACEMIT_P1=m
