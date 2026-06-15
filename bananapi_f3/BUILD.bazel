@@ -24,7 +24,7 @@ load(
     "vendor_dlkm_image",
 )
 load(
-    "//common:modules.bzl",
+    "//common:bazel/modules.bzl",
     "get_gki_modules_list",
     "get_kunit_modules_list",
 )
@@ -45,8 +45,8 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     # Reset (needed early)
     "reset-spacemit-common.ko",
     "reset-spacemit-k1.ko",
-    # Pinctrl (GPIO mux - needed for eMMC pins)
-    "pinctrl-k1.ko",
+    # Pinctrl is builtin (=y) on 7.1: the upstream K1 pinctrl driver uses
+    # builtin_platform_driver, so it ships in the Image rather than as a .ko.
     # GPIO
     "gpio-spacemit-k1.ko",
     # I2C (for PMIC)
@@ -98,7 +98,7 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "spi-k1x-qspi.ko",
     # PCIe
     "pci-pwrctrl-core.ko",
-    "pci-pwrctrl-slot.ko",
+    "pci-pwrctrl-generic.ko",
     "pcie-spacemit-k1.ko",
     # PWM
     "pwm-dwc-k1pro.ko",
@@ -144,7 +144,6 @@ SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
     "drivers/clk/spacemit/spacemit-ccu-k1.ko",
     "drivers/reset/spacemit/reset-spacemit-common.ko",
     "drivers/reset/spacemit/reset-spacemit-k1.ko",
-    "drivers/pinctrl/spacemit/pinctrl-k1.ko",
     "drivers/gpio/gpio-spacemit-k1.ko",
     "drivers/i2c/busses/i2c-k1.ko",
     "drivers/mfd/simple-mfd-i2c.ko",
@@ -178,7 +177,7 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/spi/k1x-spi.ko",
     "drivers/spi/spi-k1x-qspi.ko",
     "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
-    "drivers/pci/pwrctrl/pci-pwrctrl-slot.ko",
+    "drivers/pci/pwrctrl/pci-pwrctrl-generic.ko",
     "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
     "drivers/pwm/pwm-dwc-k1pro.ko",
     "drivers/thermal/k1x-thermal.ko",
@@ -219,8 +218,7 @@ SPACEMIT_IN_TREE_MODULES = [
     # Reset
     "drivers/reset/spacemit/reset-spacemit-common.ko",
     "drivers/reset/spacemit/reset-spacemit-k1.ko",
-    # Pinctrl
-    "drivers/pinctrl/spacemit/pinctrl-k1.ko",
+    # Pinctrl is builtin (=y) on 7.1 (builtin_platform_driver), no .ko emitted
     # GPIO
     "drivers/gpio/gpio-spacemit-k1.ko",
     # I2C
@@ -266,7 +264,7 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/spi/spi-k1x-qspi.ko",
     # PCIe
     "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
-    "drivers/pci/pwrctrl/pci-pwrctrl-slot.ko",
+    "drivers/pci/pwrctrl/pci-pwrctrl-generic.ko",
     "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
     # PWM
     "drivers/pwm/pwm-dwc-k1pro.ko",

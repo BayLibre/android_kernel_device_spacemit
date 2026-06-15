@@ -85,9 +85,9 @@ CONFIG_SPACEMIT_CCU=m
 CONFIG_SPACEMIT_K1_CCU=m
 
 # ============================================================
-# Pinctrl (module - chargé depuis initramfs)
+# Pinctrl (builtin - upstream K1 driver is builtin_platform_driver)
 # ============================================================
-CONFIG_PINCTRL_SPACEMIT_K1=m
+CONFIG_PINCTRL_SPACEMIT_K1=y
 
 # ============================================================
 # GPIO (module - chargé depuis initramfs)
@@ -151,11 +151,6 @@ CONFIG_PWM_K1=m
 # Thermal (module)
 # ============================================================
 CONFIG_K1X_THERMAL=m
-
-# ============================================================
-# CPU Freq (module)
-# ============================================================
-CONFIG_SPACEMIT_K1X_CPUFREQ=m
 
 # ============================================================
 # DMA (module)
