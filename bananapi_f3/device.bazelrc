@@ -7,7 +7,10 @@
 # Or with explicit device config:
 #   tools/bazel run --config=spacemit_k1x //devices/spacemit/bananapi_f3:spacemit_k1x_dist
 
-build:spacemit_k1x --//build/kernel/kleaf:config_repo=@config_repo
+# Local build (disable sandboxing). Replaces the obsolete kleaf
+# config_repo label_flag, removed during the android-mainline migration.
+build:spacemit_k1x --config=local
 
-# RISC-V specific settings
-build:spacemit_k1x --platforms=@platforms//cpu:riscv64
+# RISC-V target platform. @platforms//cpu:riscv64 is only a constraint_value;
+# kleaf provides the actual riscv64 platform via the android_riscv64 config.
+build:spacemit_k1x --config=android_riscv64

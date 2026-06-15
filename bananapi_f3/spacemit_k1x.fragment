@@ -9,6 +9,19 @@
 # ARCH_SPACEMIT est builtin dans gki_defconfig
 
 # ============================================================
+# Timer tick — bump HZ from 250 (RISC-V default) to 1000
+# ============================================================
+# RISC-V kernel defaults to HZ=250 (server-oriented).  Android UI runs
+# at 60Hz so a 4ms tick can cost up to 25% of the 16.6ms frame budget
+# in jiffies-based scheduling jitter.  HZ=1000 (ARM Android standard)
+# reduces tick to 1ms (~6% of frame budget).  Kconfig HZ_* is a
+# `choice` so we explicitly disable the others.
+# CONFIG_HZ_100 is not set
+# CONFIG_HZ_250 is not set
+# CONFIG_HZ_300 is not set
+CONFIG_HZ_1000=y
+
+# ============================================================
 # SoC Selection - Already in gki_defconfig
 # ============================================================
 # CONFIG_ARCH_SPACEMIT=y  <- Dans gki_defconfig
@@ -27,6 +40,11 @@ CONFIG_DEVTMPFS_MOUNT=y
 
 # Crypto (android-base.config)
 CONFIG_CRYPTO_NULL=y
+# dm-verity hashtrees are signed with sha1 (avbtool's backwards-compat default,
+# not overridden in the device AVB args). The crypto-lib rework dropped SHA1's
+# implicit enable, so crypto_alloc_shash("sha1") returns -ENOENT and verity
+# fails to mount system. Register the sha1 shash explicitly.
+CONFIG_CRYPTO_SHA1=y
 
 # Netfilter (android-base.config)
 CONFIG_IP_NF_MATCH_RPFILTER=y
@@ -79,7 +97,7 @@ CONFIG_GPIO_SPACEMIT_K1=m
 # ============================================================
 # Reset Controller (module - chargé depuis initramfs)
 # ============================================================
-CONFIG_RESET_SPACEMIT=m
+CONFIG_RESET_SPACEMIT_K1=m
 
 # ============================================================
 # MMC/SD/eMMC (module - chargé depuis initramfs)
@@ -90,6 +108,10 @@ CONFIG_MMC_SDHCI_OF_K1=m
 # Ethernet (module)
 # ============================================================
 CONFIG_SPACEMIT_K1_EMAC=m
+# RTL8211F PHY on both eth0/eth1 (MDIO id 0x001cc916). Without this the
+# link falls back to the genphy driver; ueventd logs a modalias load
+# failure for ethernet-phy-id001c.c916. Needed for ALDPS/EEE/WoL config.
+CONFIG_REALTEK_PHY=m
 
 # ============================================================
 # I2C (module)
@@ -148,10 +170,18 @@ CONFIG_USB_DWC3_SPACEMIT=m
 CONFIG_USB_PHY_K1X_CI_USB2=m
 CONFIG_USB_PHY_K1X_CI_OTG=m
 CONFIG_USB_EHCI_K1X_CI=m
-CONFIG_USB_SPACEMIT_ONBOARD_HUB=m
+# Onboard VL817 USB hub power/reset sequencing (binds the board hub@1/hub@2,
+# compat usb2109,2817/817). Replaces the downstream spacemit,usb3-hub driver
+# whose DT node does not exist on the 7.0.0 tree.
+CONFIG_USB_ONBOARD_DEV=m
 CONFIG_USB_K1X_UDC=m
 # Combo PHY for PCIe/USB3 (required for xHCI to come out of init -110 timeout)
 CONFIG_PHY_SPACEMIT_K1X_COMBPHY=m
+# Upstream USB2 PHY for the dwc3 host port (usbphy2 = spacemit,k1-usb2-phy).
+# Without it the dwc3 host defers forever on its "usb2-phy" and never registers
+# the DWC3 core. Built-in (=y) to mirror the combo phy (CONFIG_PHY_SPACEMIT_K1_PCIE=y),
+# so it probes at boot with no module packaging / load-order concerns.
+CONFIG_PHY_SPACEMIT_K1_USB2=y
 
 # ============================================================
 # GPU/DRM (module) - Ported from Buildroot

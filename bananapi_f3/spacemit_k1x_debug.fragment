@@ -1,0 +1,13 @@
+# Debug GKI overrides — OPT-IN, not wired by default.
+#
+# KFENCE and PROVE_LOCKING (which selects the whole LOCKDEP / DEBUG_*_MUTEX /
+# SPINLOCK / RWSEM family) were moved out of common/arch/riscv/configs/gki_defconfig
+# so the default build is non-debug and valid for performance measurement.
+#
+# To build the debug kernel, add this to the kernel_build target:
+#     post_defconfig_fragments = [":spacemit_k1x_debug.fragment"],
+CONFIG_KFENCE=y
+CONFIG_KFENCE_SAMPLE_INTERVAL=500
+CONFIG_KFENCE_NUM_OBJECTS=63
+CONFIG_KFENCE_STATIC_KEYS=y
+CONFIG_PROVE_LOCKING=y

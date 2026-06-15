@@ -35,10 +35,16 @@ load(
 # Order matters for dependencies!
 # ============================================================
 SPACEMIT_VENDOR_BOOT_MODULES = [
-    # Clock (first - everything depends on it)
+    # Clock (first - everything depends on it). The CCU core MUST load before the
+    # K1 driver: spacemit-ccu.ko exports spacemit_ccu_probe + the *_ops that
+    # spacemit-ccu-k1.ko links against (split into core/SoC modules during the
+    # android-mainline migration). Loading k1 alone => "Unknown symbol
+    # spacemit_ccu_*" => no clocks => pinctrl/mmc/i2c/gpio/usb defer => reboot.
+    "spacemit-ccu.ko",
     "spacemit-ccu-k1.ko",
     # Reset (needed early)
-    "reset-spacemit.ko",
+    "reset-spacemit-common.ko",
+    "reset-spacemit-k1.ko",
     # Pinctrl (GPIO mux - needed for eMMC pins)
     "pinctrl-k1.ko",
     # GPIO
@@ -80,7 +86,10 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "lt8911exb.ko",
     "lt9711.ko",
     "raspberrypi_touchscreen.ko",
-    # Ethernet
+    # Ethernet — Realtek RTL8211F PHY (+ PHY_PACKAGE dep) must load before
+    # the MAC so the RTL8211F binds instead of the genphy fallback.
+    "phy_package.ko",
+    "realtek.ko",
     "k1_emac.ko",
     # I2C additional
     "i2c-k1x.ko",
@@ -109,7 +118,7 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "phy-k1x-ci-usb2.ko",
     "phy-k1x-ci-otg.ko",
     "ehci-k1x-ci.ko",
-    "spacemit_onboard_hub.ko",
+    "onboard_usb_dev.ko",
     "k1x_udc_core.ko",
     # Media/Camera
     "cam_plat_v2.ko",
@@ -133,7 +142,8 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
 # ============================================================
 SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
     "drivers/clk/spacemit/spacemit-ccu-k1.ko",
-    "drivers/reset/reset-spacemit.ko",
+    "drivers/reset/spacemit/reset-spacemit-common.ko",
+    "drivers/reset/spacemit/reset-spacemit-k1.ko",
     "drivers/pinctrl/spacemit/pinctrl-k1.ko",
     "drivers/gpio/gpio-spacemit-k1.ko",
     "drivers/i2c/busses/i2c-k1.ko",
@@ -161,6 +171,8 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/gpu/drm/spacemit/lt8911exb.ko",
     "drivers/gpu/drm/spacemit/lt9711.ko",
     "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    "drivers/net/phy/phy_package.ko",
+    "drivers/net/phy/realtek/realtek.ko",
     "drivers/net/ethernet/spacemit/k1_emac.ko",
     "drivers/i2c/busses/i2c-k1x.ko",
     "drivers/spi/k1x-spi.ko",
@@ -179,7 +191,7 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/usb/phy/phy-k1x-ci-usb2.ko",
     "drivers/usb/phy/phy-k1x-ci-otg.ko",
     "drivers/usb/host/ehci-k1x-ci.ko",
-    "drivers/usb/misc/spacemit_onboard_hub.ko",
+    "drivers/usb/misc/onboard_usb_dev.ko",
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
     "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
     "drivers/media/platform/spacemit/camera/cam_ccic_v2.ko",
@@ -202,9 +214,11 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
 SPACEMIT_IN_TREE_MODULES = [
     # Vendor boot modules (needed for eMMC access during early boot)
     # Clock
+    "drivers/clk/spacemit/spacemit-ccu.ko",
     "drivers/clk/spacemit/spacemit-ccu-k1.ko",
     # Reset
-    "drivers/reset/reset-spacemit.ko",
+    "drivers/reset/spacemit/reset-spacemit-common.ko",
+    "drivers/reset/spacemit/reset-spacemit-k1.ko",
     # Pinctrl
     "drivers/pinctrl/spacemit/pinctrl-k1.ko",
     # GPIO
@@ -244,6 +258,9 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
     # Ethernet
     "drivers/net/ethernet/spacemit/k1_emac.ko",
+    # Realtek RTL8211F PHY (CONFIG_REALTEK_PHY=m) and its PHY_PACKAGE dep
+    "drivers/net/phy/phy_package.ko",
+    "drivers/net/phy/realtek/realtek.ko",
     # SPI
     "drivers/spi/k1x-spi.ko",
     "drivers/spi/spi-k1x-qspi.ko",
@@ -269,7 +286,7 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/usb/phy/phy-k1x-ci-usb2.ko",
     "drivers/usb/phy/phy-k1x-ci-otg.ko",
     "drivers/usb/host/ehci-k1x-ci.ko",
-    "drivers/usb/misc/spacemit_onboard_hub.ko",
+    "drivers/usb/misc/onboard_usb_dev.ko",
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
     # Media/Camera
     "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
@@ -317,6 +334,7 @@ kernel_build(
         "vmlinux.symvers",
         # Device Tree Blobs
         "arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dtb",
+        "arch/riscv/boot/dts/spacemit/k1-musepi-pro.dtb",
     ],
     arch = "riscv64",
     ddk_module_headers = ["//common:all_headers_riscv64"],
@@ -326,6 +344,7 @@ kernel_build(
         "Image.gz",
         "modules",
         "spacemit/k1-bananapi-f3.dtb",
+        "spacemit/k1-musepi-pro.dtb",
     ],
     makefile = "//common:Makefile",
     module_outs = get_gki_modules_list("riscv64") +
