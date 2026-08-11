@@ -466,3 +466,15 @@ CONFIG_K3_THERMAL=y
 # the DMA engine -- i.e. arbitrary physical-memory R/W from any process (CRITICAL).
 # Not needed for display/Android bring-up. Ported source left in-tree, disabled.
 # K3 VPU (linlon-v5) uses CONFIG_VIDEO_LINLON_K1X: same amvx driver, of_match already covers linlon-v5.
+
+# ============================================================
+# K3 drivers ported but not yet wired into the build
+# ============================================================
+# CONFIG_SPACEMIT_K3_CCIC is NOT enabled: it exports ccic_ctrl_get() and
+# ccic_dphy_hssettle_set(), names the K1 camera driver (cam_ccic_v2.ko) already
+# exports, so the two cannot live in one kernel. Enabling it means renaming the
+# K3 exports first. Ported source left in-tree, disabled.
+# Clears the reset-armed AP power-down votes that the RCPU firmware re-arms at
+# runtime; without it an all-idle lull can drop a WFI hart out of IMSIC reach and
+# freeze the machine. Builtin by design: it must run before the first deep idle.
+CONFIG_SPACEMIT_K3_PMU_KEEPALIVE=y
