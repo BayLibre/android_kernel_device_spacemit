@@ -1,11 +1,11 @@
 # Spacemit K1-X Banana Pi F3 device bazelrc
 #
 # Usage:
-#   ln -sf devices/spacemit/bananapi_f3/device.bazelrc device.bazelrc
-#   tools/bazel run //devices/spacemit/bananapi_f3:spacemit_k1x_dist
+#   ln -sf devices/spacemit/spacemit_soc/device.bazelrc device.bazelrc
+#   tools/bazel run //devices/spacemit/spacemit_soc:spacemit_k1x_dist
 #
 # Or with explicit device config:
-#   tools/bazel run --config=spacemit_k1x //devices/spacemit/bananapi_f3:spacemit_k1x_dist
+#   tools/bazel run --config=spacemit_k1x //devices/spacemit/spacemit_soc:spacemit_k1x_dist
 
 # Local build (disable sandboxing). Replaces the obsolete kleaf
 # config_repo label_flag, removed during the android-mainline migration.

@@ -6,4 +6,4 @@ extfs_rsv_pct=0
 journal_size=0
 partition_name=vendor_dlkm
 mount_point=vendor_dlkm
-selinux_fc=devices/spacemit/bananapi_f3/selinux/file_contexts
+selinux_fc=devices/spacemit/spacemit_soc/selinux/file_contexts

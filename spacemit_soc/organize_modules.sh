@@ -8,7 +8,7 @@ DIST_DIR="${1:-out/spacemit_k1x/dist}"
 
 if [ ! -d "$DIST_DIR" ]; then
     echo "Error: Distribution directory not found: $DIST_DIR"
-    echo "Run 'tools/bazel build //devices/spacemit/bananapi_f3:spacemit_k1x_dist' first"
+    echo "Run 'tools/bazel build //devices/spacemit/spacemit_soc:spacemit_k1x_dist' first"
     exit 1
 fi
 
