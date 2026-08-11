@@ -11,3 +11,19 @@ CONFIG_KFENCE_SAMPLE_INTERVAL=500
 CONFIG_KFENCE_NUM_OBJECTS=63
 CONFIG_KFENCE_STATIC_KEYS=y
 CONFIG_PROVE_LOCKING=y
+
+# Catch a sleeping regmap (syscon mutex) reached from an atomic clk .enable
+# under enable_lock: might_sleep() then fires "sleeping function called from
+# invalid context" during CCU probe, and the stack
+# (ccu_gate_enable/ccu_pll_enable -> regmap -> mutex_lock -> clk_core_enable)
+# names the caller.
+CONFIG_DEBUG_KERNEL=y
+CONFIG_DEBUG_ATOMIC_SLEEP=y
+
+# Cross-hart smp_call diagnostics: csd_lock_wait names the secondary that is
+# not acking the IPI, with the function and a backtrace of that CPU, a few
+# seconds before an RCU stall would fire. DEFAULT=y arms it without needing
+# the csdlock_debug= bootarg, and the shorter stall timeout reports sooner.
+CONFIG_CSD_LOCK_WAIT_DEBUG=y
+CONFIG_CSD_LOCK_WAIT_DEBUG_DEFAULT=y
+CONFIG_RCU_CPU_STALL_TIMEOUT=7
