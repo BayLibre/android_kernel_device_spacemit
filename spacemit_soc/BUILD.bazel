@@ -42,9 +42,11 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     # spacemit_ccu_*" => no clocks => pinctrl/mmc/i2c/gpio/usb defer => reboot.
     "spacemit-ccu.ko",
     "spacemit-ccu-k1.ko",
+    "spacemit-ccu-k3.ko",
     # Reset (needed early)
     "reset-spacemit-common.ko",
     "reset-spacemit-k1.ko",
+    "reset-spacemit-k3.ko",
     # Pinctrl is builtin (=y) on 7.1: the upstream K1 pinctrl driver uses
     # builtin_platform_driver, so it ships in the Image rather than as a .ko.
     # GPIO
@@ -57,6 +59,17 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     "spacemit-p1.ko",
     # MMC/eMMC (boot device - CRITICAL)
     "sdhci-of-k1.ko",
+    # UFS — K3 Pico-ITX boot storage (UFS 2.2, no eMMC). SCSI/UFSHCD core +
+    # platform glue are builtin (gki_defconfig =y); only the SpacemiT glue is
+    # a module. Must be in the ramdisk so the UFS root mounts at first stage.
+    # K3-only: no spacemit,k3-ufshcd DT node on K1, so it stays idle there.
+    "ufs-spacemit.ko",
+    # K3 USB3 combo PHY + Type-C orientation switch (K3-only, deps builtin).
+    # In vendor_boot so recovery has USB3 in first stage; dwc3 (generic-plat,
+    # builtin) defers until this loads for the USB3 ports.
+    "phy-k3-usb3.ko",
+    # FUSB301 Type-C DRP controller on i2c1 (K3 Pico-ITX USB-C, K3-only).
+    "fusb301.ko",
     # RTC
     "rtc-spacemit-p1.ko",
     # Reboot
@@ -69,6 +82,10 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     # DRM stack — moved here so HDMI is up earlier (lets HwComposer / SF
     # start much sooner → bootanim has time to display).
     "drm_dma_helper.ko",
+    # fbdev client lib: spacemit-drm links against
+    # drm_client_setup_with_color_mode, which lives here. Must be loaded
+    # first stage, before spacemit-drm.
+    "drm_client_lib.ko",
     "spacemit-drm.ko",
     "spacemit_hdmi.ko",
 ]
@@ -79,6 +96,15 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
 SPACEMIT_VENDOR_DLKM_MODULES = [
     # DMA
     "mmp_pdma.ko",
+    # K3 Audio DMA (DP-audio path) — K3-only, no-op on K1 (no DT node)
+    "adma-spacemit.ko",
+    # K3 V2D 2D engine (CONFIG_SPACEMIT_V2D=m), binds spacemit,v2d
+    "v2d.ko",
+    # SoC info / eFuse / SoC boot-mode reboot. Built (=m) but shipped nowhere
+    # before; ship them here so second stage has chip info + SoC reboot.
+    "spacemit-socinfo.ko",
+    "spacemit-efuse.ko",
+    "spacemit-k1x-reboot.ko",
     # NOTE: drm_dma_helper / spacemit-drm / spacemit_hdmi /
     # k1x-dma-range / spacemit_ddrbw moved to VENDOR_BOOT_MODULES so
     # HDMI is ready early enough for SurfaceFlinger / bootanim to display.
@@ -86,11 +112,42 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "lt8911exb.ko",
     "lt9711.ko",
     "raspberrypi_touchscreen.ko",
+    # K3 display (saturn-hee) DP/eDP — K3-only, no-op on K1 boards
+    # (no matching DT node), built separately from spacemit-drm.ko.
+    # DRM display helper + DP-AUX-bus must load before inno_dp.
+    "drm_display_helper.ko",
+    "drm_dp_aux_bus.ko",
+    # DRM fbdev client lib (pulled by DRM_CLIENT_SELECTION for the K3 DPU
+    # master's drm_client_setup/fbdev-dma). Must load before spacemit-drm-k3.
+    "drm_client_lib.ko",
+    # K3 DPU master + CRTC (scan-out). Registers the drm_device and calls
+    # component_bind_all(), so it must load AFTER its component sub-drivers
+    # (spacemit_inno_dp.ko) are registered. K3-only: of_match saturn-hee/
+    # saturn-edp + dpu-saturn, disjoint from the K1 spacemit-drm.ko, so it
+    # is a no-op on K1 boards (no matching DT node).
+    "spacemit_inno_dp.ko",
+    "spacemit-drm-k3.ko",
     # Ethernet — Realtek RTL8211F PHY (+ PHY_PACKAGE dep) must load before
     # the MAC so the RTL8211F binds instead of the genphy fallback.
     "phy_package.ko",
     "realtek.ko",
     "k1_emac.ko",
+    # RFKILL GPIO backend — drives WLAN_EN / BT_EN enable lines (rfkill-pcie-wlan
+    # / rfkill-usb-bt DT nodes). rfkill core is GKI (system_dlkm). K3 board only.
+    "rfkill-gpio.ko",
+    # WiFi — Realtek RTL8852BE (PCIe) on the K3 Pico-ITX M.2 slot. Load order:
+    # cfg80211 -> mac80211 -> core -> pci (bus) -> 8852b_common -> 8852b (chip)
+    # -> 8852be (pci glue). cfg80211/mac80211 build as GKI modules but ship
+    # nowhere by default (not in system_dlkm), so the rtw89 stack has no 802.11
+    # core to bind against; ship them here in vendor_dlkm, before rtw89.
+    # K3-only; no matching PCIe device on K1 boards.
+    "cfg80211.ko",
+    "mac80211.ko",
+    "rtw89_core.ko",
+    "rtw89_pci.ko",
+    "rtw89_8852b_common.ko",
+    "rtw89_8852b.ko",
+    "rtw89_8852be.ko",
     # I2C additional
     "i2c-k1x.ko",
     # SPI
@@ -99,6 +156,10 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     # PCIe
     "pci-pwrctrl-core.ko",
     "pci-pwrctrl-generic.ko",
+    # K3 PCIe PHY (compat spacemit,k3-pcie-phy) must load before the shared
+    # K1 RC driver so phy_init() in the RC probe finds the provider. K3-only,
+    # no-op on K1 boards (no matching DT node).
+    "phy-k3-pcie.ko",
     "pcie-spacemit-k1.ko",
     # PWM
     "pwm-dwc-k1pro.ko",
@@ -120,6 +181,14 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "ehci-k1x-ci.ko",
     "onboard_usb_dev.ko",
     "k1x_udc_core.ko",
+    # phy-k3-usb3.ko + fusb301.ko moved to VENDOR_BOOT_MODULES so recovery
+    # has USB3 / Type-C in first stage.
+    # Bluetooth — Realtek RTL8852B over USB (btusb). btusb hard-selects
+    # btintel; BT_HCIBTUSB_RTL (default y) pulls btrtl for the RTL8852B.
+    # net/bluetooth/*.ko + btbcm.ko are GKI-provided. K3-only (USB BT).
+    "btintel.ko",
+    "btrtl.ko",
+    "btusb.ko",
     # Media/Camera
     "cam_plat_v2.ko",
     "cam_ccic_v2.ko",
@@ -132,6 +201,8 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "vcam_dbg.ko",
     "snd-soc-es8326.ko",
     "snd-soc-k1-i2s.ko",
+    # K3 DP-audio RI2S CPU DAI — K3-only, no-op on K1 (no DT node)
+    "snd-soc-k3-ri2s.ko",
     "snd-soc-simple-card.ko",
     "snd-soc-simple-card-utils.ko",
 ]
@@ -149,12 +220,14 @@ SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
     "drivers/mfd/simple-mfd-i2c.ko",
     "drivers/regulator/spacemit-p1.ko",
     "drivers/mmc/host/sdhci-of-k1.ko",
+    "drivers/ufs/host/ufs-spacemit.ko",
     "drivers/rtc/rtc-spacemit-p1.ko",
     "drivers/power/reset/spacemit-p1-reboot.ko",
     # SoC + DRM stack moved from vendor_dlkm to vendor_boot
     "drivers/soc/spacemit/k1x-dma-range.ko",
     "drivers/soc/spacemit/ddr-bw/spacemit_ddrbw.ko",
     "drivers/gpu/drm/drm_dma_helper.ko",
+    "drivers/gpu/drm/clients/drm_client_lib.ko",
     "drivers/gpu/drm/spacemit/spacemit-drm.ko",
     "drivers/gpu/drm/spacemit/spacemit_hdmi.ko",
 ]
@@ -164,20 +237,32 @@ SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
 # ============================================================
 SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/dma/mmp_pdma.ko",
+    "drivers/dma/adma-spacemit.ko",
     # k1x-dma-range / spacemit_ddrbw / drm_dma_helper / spacemit-drm /
     # spacemit_hdmi moved to VENDOR_BOOT_MODULES_PATHS for early load.
     "drivers/gpu/drm/spacemit/spacemit_mipi_panel.ko",
     "drivers/gpu/drm/spacemit/lt8911exb.ko",
     "drivers/gpu/drm/spacemit/lt9711.ko",
     "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    "drivers/gpu/drm/display/drm_display_helper.ko",
+    "drivers/gpu/drm/display/drm_dp_aux_bus.ko",
+    "drivers/gpu/drm/clients/drm_client_lib.ko",
+    "drivers/gpu/drm/spacemit_k3/spacemit_inno_dp.ko",
+    "drivers/gpu/drm/spacemit_k3/spacemit-drm-k3.ko",
     "drivers/net/phy/phy_package.ko",
     "drivers/net/phy/realtek/realtek.ko",
     "drivers/net/ethernet/spacemit/k1_emac.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_core.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_pci.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852b_common.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852b.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852be.ko",
     "drivers/i2c/busses/i2c-k1x.ko",
     "drivers/spi/k1x-spi.ko",
     "drivers/spi/spi-k1x-qspi.ko",
     "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
     "drivers/pci/pwrctrl/pci-pwrctrl-generic.ko",
+    "drivers/phy/spacemit/phy-k3-pcie.ko",
     "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
     "drivers/pwm/pwm-dwc-k1pro.ko",
     "drivers/thermal/k1x-thermal.ko",
@@ -192,6 +277,11 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/usb/host/ehci-k1x-ci.ko",
     "drivers/usb/misc/onboard_usb_dev.ko",
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
+    "drivers/phy/spacemit/phy-k3-usb3.ko",
+    "drivers/usb/typec/fusb301.ko",
+    "drivers/bluetooth/btintel.ko",
+    "drivers/bluetooth/btrtl.ko",
+    "drivers/bluetooth/btusb.ko",
     "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
     "drivers/media/platform/spacemit/camera/cam_ccic_v2.ko",
     "drivers/media/platform/spacemit/camera/cam_vi_v2.ko",
@@ -203,6 +293,7 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/media/platform/spacemit/virtual_camera/vcam_dbg.ko",
     "sound/soc/codecs/snd-soc-es8326.ko",
     "sound/soc/spacemit/snd-soc-k1-i2s.ko",
+    "sound/soc/spacemit/snd-soc-k3-ri2s.ko",
     "sound/soc/generic/snd-soc-simple-card.ko",
     "sound/soc/generic/snd-soc-simple-card-utils.ko",
 ]
@@ -215,9 +306,11 @@ SPACEMIT_IN_TREE_MODULES = [
     # Clock
     "drivers/clk/spacemit/spacemit-ccu.ko",
     "drivers/clk/spacemit/spacemit-ccu-k1.ko",
+    "drivers/clk/spacemit/spacemit-ccu-k3.ko",
     # Reset
     "drivers/reset/spacemit/reset-spacemit-common.ko",
     "drivers/reset/spacemit/reset-spacemit-k1.ko",
+    "drivers/reset/spacemit/reset-spacemit-k3.ko",
     # Pinctrl is builtin (=y) on 7.1 (builtin_platform_driver), no .ko emitted
     # GPIO
     "drivers/gpio/gpio-spacemit-k1.ko",
@@ -229,6 +322,9 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/regulator/spacemit-p1.ko",
     # MMC (CRITICAL for eMMC)
     "drivers/mmc/host/sdhci-of-k1.ko",
+    # UFS — K3 Pico-ITX boot storage (SCSI/UFSHCD core+pltfrm builtin; only
+    # the SpacemiT glue is a module). K3-only, idle on K1 (no DT node).
+    "drivers/ufs/host/ufs-spacemit.ko",
     # RTC
     "drivers/rtc/rtc-spacemit-p1.ko",
     # Reboot
@@ -238,6 +334,8 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/i2c/busses/i2c-k1x.ko",
     # DMA
     "drivers/dma/mmp_pdma.ko",
+    # K3 Audio DMA (DP-audio path), CONFIG_SPACEMIT_ADMA=m (K3-only)
+    "drivers/dma/adma-spacemit.ko",
     # SoC: DRAM bus stub + DDR AXI bandwidth monitor + chip info
     "drivers/soc/spacemit/k1x-dma-range.ko",
     "drivers/soc/spacemit/ddr-bw/spacemit_ddrbw.ko",
@@ -254,22 +352,50 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/gpu/drm/spacemit/lt8911exb.ko",
     "drivers/gpu/drm/spacemit/lt9711.ko",
     "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    # K3 display (saturn-hee) — separate module tree, does not touch
+    # the K1 spacemit-drm.ko above. The DP/eDP driver selects the GKI
+    # DRM display + DP-AUX-bus helpers, which build as their own modules.
+    "drivers/gpu/drm/display/drm_display_helper.ko",
+    "drivers/gpu/drm/display/drm_dp_aux_bus.ko",
+    "drivers/gpu/drm/clients/drm_client_lib.ko",
+    "drivers/gpu/drm/spacemit_k3/spacemit_inno_dp.ko",
+    "drivers/gpu/drm/spacemit_k3/spacemit-drm-k3.ko",
     # Ethernet
     "drivers/net/ethernet/spacemit/k1_emac.ko",
+    # K3 GMAC — STMMAC/DWMAC + Synopsys XPCS, CONFIG_DWMAC_SPACEMIT=m (K3-only)
+    "drivers/net/pcs/pcs_xpcs.ko",
+    "drivers/net/ethernet/stmicro/stmmac/stmmac.ko",
+    "drivers/net/ethernet/stmicro/stmmac/stmmac-platform.ko",
+    "drivers/net/ethernet/stmicro/stmmac/dwmac-generic.ko",
+    "drivers/net/ethernet/stmicro/stmmac/dwmac-spacemit.ko",
     # Realtek RTL8211F PHY (CONFIG_REALTEK_PHY=m) and its PHY_PACKAGE dep
     "drivers/net/phy/phy_package.ko",
     "drivers/net/phy/realtek/realtek.ko",
+    # WiFi — Realtek RTL8852BE (PCIe), CONFIG_RTW89_8852BE=m (K3-only)
+    "drivers/net/wireless/realtek/rtw89/rtw89_core.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_pci.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852b_common.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852b.ko",
+    "drivers/net/wireless/realtek/rtw89/rtw89_8852be.ko",
+    # RFKILL GPIO backend (WLAN_EN / BT_EN enable lines), CONFIG_RFKILL_GPIO=m
+    "net/rfkill/rfkill-gpio.ko",
     # SPI
     "drivers/spi/k1x-spi.ko",
     "drivers/spi/spi-k1x-qspi.ko",
     # PCIe
     "drivers/pci/pwrctrl/pci-pwrctrl-core.ko",
     "drivers/pci/pwrctrl/pci-pwrctrl-generic.ko",
+    # K3 PCIe PHY (compat spacemit,k3-pcie-phy), CONFIG_PHY_SPACEMIT_K3_PCIE=m (K3-only)
+    "drivers/phy/spacemit/phy-k3-pcie.ko",
     "drivers/pci/controller/dwc/pcie-spacemit-k1.ko",
     # PWM
     "drivers/pwm/pwm-dwc-k1pro.ko",
     # Thermal
     "drivers/thermal/k1x-thermal.ko",
+    # K3 SoC drivers ported from the vendor BSP (=m). The bool-only ones
+    # (pwrkey, reboot, suspend_irq, mailbox, iommu, timer, thermal, hdma) are
+    # built-in (=y) so they emit no .ko.
+    "drivers/soc/spacemit/v2d/v2d.ko",
     # GPU (PowerVR upstream) + dependencies
     "drivers/gpu/drm/drm_gpuvm.ko",
     "drivers/gpu/drm/drm_exec.ko",
@@ -286,6 +412,14 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/usb/host/ehci-k1x-ci.ko",
     "drivers/usb/misc/onboard_usb_dev.ko",
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
+    # K3 USB3 combo PHY + Type-C orientation switch (K3-only)
+    "drivers/phy/spacemit/phy-k3-usb3.ko",
+    # FUSB301 Type-C DRP controller (K3-only)
+    "drivers/usb/typec/fusb301.ko",
+    # Bluetooth — RTL8852B over USB (btusb + btintel hard-select + btrtl)
+    "drivers/bluetooth/btintel.ko",
+    "drivers/bluetooth/btrtl.ko",
+    "drivers/bluetooth/btusb.ko",
     # Media/Camera
     "drivers/media/platform/spacemit/camera/cam_plat_v2.ko",
     "drivers/media/platform/spacemit/camera/cam_ccic_v2.ko",
@@ -299,6 +433,8 @@ SPACEMIT_IN_TREE_MODULES = [
     # Sound
     "sound/soc/codecs/snd-soc-es8326.ko",
     "sound/soc/spacemit/snd-soc-k1-i2s.ko",
+    # K3 DP-audio RI2S CPU DAI, CONFIG_SND_SOC_K3_RI2S=m (K3-only)
+    "sound/soc/spacemit/snd-soc-k3-ri2s.ko",
     "sound/soc/generic/snd-soc-simple-card.ko",
     "sound/soc/generic/snd-soc-simple-card-utils.ko",
 ]
@@ -333,6 +469,7 @@ kernel_build(
         # Device Tree Blobs
         "arch/riscv/boot/dts/spacemit/k1-bananapi-f3.dtb",
         "arch/riscv/boot/dts/spacemit/k1-musepi-pro.dtb",
+        "arch/riscv/boot/dts/spacemit/k3-pico-itx.dtb",
     ],
     arch = "riscv64",
     ddk_module_headers = ["//common:all_headers_riscv64"],
@@ -343,11 +480,13 @@ kernel_build(
         "modules",
         "spacemit/k1-bananapi-f3.dtb",
         "spacemit/k1-musepi-pro.dtb",
+        "spacemit/k3-pico-itx.dtb",
     ],
     makefile = "//common:Makefile",
     module_outs = get_gki_modules_list("riscv64") +
                   get_kunit_modules_list("riscv64") +
                   SPACEMIT_IN_TREE_MODULES,
+    pahole = "//common:pahole",
     pre_defconfig_fragments = [":spacemit_k1x.fragment"],
     strip_modules = True,
     visibility = ["//visibility:public"],

@@ -59,6 +59,19 @@ CONFIG_TMPFS_XATTR=y
 # K1 X60 does NOT support misaligned vector stores
 # Kernel patched (traps_misaligned.c) to emulate vse8/16/32/64 in trap handler
 
+# Disable the vectorized copy_to/from_user() path: the X100 hangs when the
+# vector unit touches non-cacheable buffers (VM_IOREMAP/DMA_COHERENT) through
+# the usercopy fast path. -1 lands in riscv_v_usercopy_threshold (size_t),
+# i.e. SIZE_MAX, so the vector path is never taken. The vendor BSP guards the
+# copy routine in core code instead; a proper fix needs to go upstream.
+CONFIG_RISCV_ISA_V_UCOPY_THRESHOLD=-1
+
+# ARCH_SUNXI is dropped from the GKI base: it would pull in the T-HEAD
+# early-alternative path, and the vendor BSP boots with ERRATA_THEAD unset
+# (device MMIO attributes come from Svpbmt granted via menvcfg.PBMTE).
+# GPIOLIB, which ARCH_SUNXI used to pull in, is re-enabled explicitly below.
+# CONFIG_ARCH_SUNXI is not set
+
 # TLS (required by GKI modules list - net/tls/tls.ko)
 CONFIG_TLS=m
 
@@ -92,6 +105,12 @@ CONFIG_PINCTRL_SPACEMIT_K1=y
 # ============================================================
 # GPIO (module - chargé depuis initramfs)
 # ============================================================
+# gki_defconfig has no explicit CONFIG_GPIOLIB: it was pulled in indirectly by
+# ARCH_SUNXI -> PINCTRL_SUNXI -> select GPIOLIB. We drop ARCH_SUNXI above (to
+# kill the T-HEAD early-alternative path), so enable GPIOLIB explicitly here.
+# Without it GPIO_SPACEMIT_K1 / GPIO_GENERIC_PLATFORM / KEYBOARD_GPIO /
+# BT_HCIUART_BCM (all GPIOLIB-dependent, =y in gki_defconfig) regress to off.
+CONFIG_GPIOLIB=y
 CONFIG_GPIO_SPACEMIT_K1=m
 
 # ============================================================
@@ -100,18 +119,69 @@ CONFIG_GPIO_SPACEMIT_K1=m
 CONFIG_RESET_SPACEMIT_K1=m
 
 # ============================================================
+# K3 SoC (spacemit,x100) — common K1/K3 kernel
+# K3 ships dedicated clk + reset drivers (separate .ko); most other
+# K3 peripherals reuse the K1 drivers via an added of_match.
+# Core CONFIG_SPACEMIT_CCU + CONFIG_RESET_SPACEMIT_COMMON already enabled above.
+# ============================================================
+CONFIG_SPACEMIT_K3_CCU=m
+CONFIG_RESET_SPACEMIT_K3=m
+
+# ============================================================
 # MMC/SD/eMMC (module - chargé depuis initramfs)
 # ============================================================
 CONFIG_MMC_SDHCI_OF_K1=m
 
 # ============================================================
+# UFS — K3 Pico-ITX boot storage (UFS 2.2, no eMMC on that variant).
+# The UFS stack is already builtin in gki_defconfig: SCSI=y, BLK_DEV_SD=y,
+# SCSI_UFSHCD=y, SCSI_UFSHCD_PLATFORM=y (and SCSI_UFS_CRYPTO=y). Do NOT
+# re-declare those as =m here — that would downgrade the shared GKI core to
+# a module (merge_config last-value-wins) and regress K1. Only the SpacemiT
+# glue is new; build it as a module. K3-only: compat spacemit,k3-ufshcd has
+# no DT node on K1 boards, so ufs-spacemit.ko stays idle there.
+# ============================================================
+CONFIG_SCSI_UFS_SPACEMIT_K3=m
+
+# ============================================================
 # Ethernet (module)
 # ============================================================
 CONFIG_SPACEMIT_K1_EMAC=m
+# K3 on-board GMAC: eth0 is compatible "spacemit,k3-dwmac" (snps dwmac-5.40a),
+# driven by the STMMAC stack (dwmac-spacemit.c) -- NOT the K1 EMAC above. The
+# stmmac menu must be enabled or DWMAC_SPACEMIT's "default m if ARCH_SPACEMIT"
+# never fires, leaving the on-board ethernet without a driver.
+CONFIG_STMMAC_ETH=m
+CONFIG_STMMAC_PLATFORM=m
+CONFIG_DWMAC_SPACEMIT=m
 # RTL8211F PHY on both eth0/eth1 (MDIO id 0x001cc916). Without this the
 # link falls back to the genphy driver; ueventd logs a modalias load
 # failure for ethernet-phy-id001c.c916. Needed for ALDPS/EEE/WoL config.
 CONFIG_REALTEK_PHY=m
+
+# ============================================================
+# Wireless — Realtek RTL8852BE (PCIe) on the K3 Pico-ITX M.2 WiFi slot
+# ============================================================
+# CFG80211 + MAC80211 are already =m in gki_defconfig (GKI-provided modules).
+# WLAN_VENDOR_REALTEK is explicitly disabled in gki_defconfig; re-enable the
+# Realtek menu so the rtw89 subdir is descended into. RTW89_8852BE auto-selects
+# RTW89_CORE/RTW89_PCI/RTW89_8852B/RTW89_8852B_COMMON. K3-only device; harmless
+# on K1 (no RTL8852BE present). Firmware rtw89/rtw8852b_fw-2.bin needed at runtime.
+CONFIG_WLAN_VENDOR_REALTEK=y
+# RTW89 is a tristate menuconfig (depends on MAC80211): it must be set
+# explicitly — selecting RTW89_8852BE alone leaves the `if RTW89` block
+# closed, so CORE/PCI/8852B never get selected.
+CONFIG_RTW89=m
+CONFIG_RTW89_8852BE=m
+
+# ============================================================
+# RFKILL GPIO — WLAN_EN / BT_EN enable lines
+# ============================================================
+# The K3 Pico-ITX wires WLAN_EN (M.2 WiFi) and BT_EN (USB BT combo) to GPIOs
+# driven by rfkill-gpio nodes (rfkill-pcie-wlan / rfkill-usb-bt). RFKILL core is
+# GKI (net/rfkill/rfkill.ko, =m in gki_defconfig); only the GPIO backend is new.
+# Depends on RFKILL (met) + GPIOLIB (=y above).
+CONFIG_RFKILL_GPIO=m
 
 # ============================================================
 # I2C (module)
@@ -124,6 +194,10 @@ CONFIG_I2C_K1X=m
 # ============================================================
 CONFIG_SPI_K1X=m
 CONFIG_SPI_K1X_QSPI=m
+# Upstream's own K1 SPI controller driver (compat "spacemit,k1-spi") is
+# "default m if ARCH_SPACEMIT". No DT node on our boards uses that compatible,
+# so it would ship as a dead module. Keep it off until the DTS migrates to it.
+# CONFIG_SPI_SPACEMIT_K1 is not set
 
 # ============================================================
 # UART - Using existing 8250 driver
@@ -141,6 +215,14 @@ CONFIG_SERIAL_EARLYCON_RISCV_SBI=y
 # PCIe (module)
 # ============================================================
 CONFIG_PCIE_SPACEMIT_K1=m
+# Per-device bounce pool for pcie4 WiFi (restricted-dma-pool node): 32-bit
+# RTL8852BE + all-RAM->4G, so the global swiotlb is unreachable at RAM top.
+CONFIG_DMA_RESTRICTED_POOL=y
+# K3 PCIe PHY (compat "spacemit,k3-pcie-phy"). Drives the K3 PCIe PHY
+# instances (lane init + PLL lock + RCAL trim) consumed by the shared
+# spacemit,k1-pcie RC driver via the standard "phys" binding. K3-only:
+# no matching DT node on K1 boards (K1 uses spacemit,k1-pcie-phy).
+CONFIG_PHY_SPACEMIT_K3_PCIE=m
 
 # ============================================================
 # PWM (module)
@@ -157,6 +239,11 @@ CONFIG_K1X_THERMAL=m
 # ============================================================
 CONFIG_MMP_PDMA=m
 # CONFIG_SPACEMIT_PDMA is not set
+# K3 Audio DMA (ADMA) — cyclic slave DMA feeding the RCPU I2S (ri2s)
+# controllers on the DP-audio path. K3-only: compat spacemit,k3-adma has
+# no DT node on K1 boards, so spacemit-adma.ko stays idle there.
+# DMA_ENGINE is already enabled via MMP_PDMA above (both select it).
+CONFIG_SPACEMIT_ADMA=m
 
 # ============================================================
 # USB (module) - Ported from Buildroot
@@ -176,7 +263,25 @@ CONFIG_PHY_SPACEMIT_K1X_COMBPHY=m
 # Without it the dwc3 host defers forever on its "usb2-phy" and never registers
 # the DWC3 core. Built-in (=y) to mirror the combo phy (CONFIG_PHY_SPACEMIT_K1_PCIE=y),
 # so it probes at boot with no module packaging / load-order concerns.
+# The same driver also matches the K3 "spacemit,k3-usb2-phy" nodes (USB2 host
+# + USB3 ports), so K3 USB2 needs no extra PHY config here.
 CONFIG_PHY_SPACEMIT_K1_USB2=y
+
+# dwc3 generic glue: matches compatible "spacemit,k1-dwc3", used by BOTH the K1
+# usb_dwc3 host node and the K3 usb2_host / usb3 controllers. Built-in (=y) to
+# preserve the existing K1 behaviour (this symbol is "default USB_DWC3", i.e. it
+# was already implicitly =y), so no module packaging / load-order change for K1.
+CONFIG_USB_DWC3_GENERIC_PLAT=y
+
+# K3 USB3 combo PHY (compat "spacemit,k3-usb3-phy" + "spacemit,k3-typec-switch").
+# Drives the USB3 ports' SuperSpeed lanes and the Type-C orientation switch
+# (CONFIG_TYPEC=y in GKI base). K3-only: no matching DT node on K1 boards.
+CONFIG_PHY_SPACEMIT_K3_USB3=m
+
+# FUSB301 Type-C DRP port controller (compat "onsemi,fusb301") on i2c1 for the
+# K3 Pico-ITX USB-C port. Handles USB data role/orientation only (no DP mux).
+# K3-only: no matching i2c node on K1 boards.
+CONFIG_TYPEC_FUSB301=m
 
 # ============================================================
 # GPU/DRM (module) - Ported from Buildroot
@@ -187,6 +292,18 @@ CONFIG_SPACEMIT_HDMI=m
 CONFIG_DRM_LT8911EXB=m
 CONFIG_DRM_LT9711=m
 CONFIG_DRM_RASPBERRYPI_TOUCHSCREEN=m
+
+# ============================================================
+# K3 (saturn-hee) display — SEPARATE from the K1 spacemit-drm
+# stack above. Distinct hardware revision, built as its own
+# module(s); does not touch CONFIG_DRM_SPACEMIT / spacemit-drm.ko.
+# ============================================================
+CONFIG_DRM_SPACEMIT_K3=m
+CONFIG_SPACEMIT_INNO_DP=m
+# K3 DPU master + CRTC (scan-out) — builds spacemit-drm-k3.ko. Calls
+# component_bind_all() so the K3 DSI/DPHY/DP sub-drivers attach. No K3
+# pmdomain provider on this tree, so SPACEMIT_NI700 stays off (guarded).
+CONFIG_DRM_SPACEMIT_K3_DPU=m
 # IMG Rogue GPU driver - external module in devices/spacemit/modules/img-rogue/
 # CONFIG_DRM_POWERVR=m  <- upstream driver, NOT compatible with K1-X GPU
 # CONFIG_POWERVR_ROGUE will be built as external ddk_module
@@ -207,6 +324,8 @@ CONFIG_SPACEMIT_K1X_VIR_CAMERA=m
 # Power Domains
 # ============================================================
 CONFIG_SPACEMIT_PM_DOMAINS=y
+CONFIG_SPACEMIT_K3_PM_DOMAINS=y
+CONFIG_RISCV_SBI_MPXY_MBOX=y
 
 # ============================================================
 # CPUFreq
@@ -215,11 +334,42 @@ CONFIG_CPUFREQ_DT=y
 CONFIG_SPACEMIT_K1X_CPUFREQ=y
 
 # ============================================================
+# CPU idle: intentionally do NOT enable RISCV_SBI_CPUIDLE (vendor parity).
+# ============================================================
+# The vendor BSP runs CONFIG_CPU_IDLE off (bare WFI). Routing idle through
+# cpuidle-riscv-sbi with the K3 non-retentive idle-states makes every idle
+# hit OpenSBI's HSM suspend, which power-gates the core and clears its
+# CCI-550 snoop lane + IMSIC interrupt file. A power-collapsed core no longer
+# latches incoming MSIs, so the first on_each_cpu(wait=1) broadcast of the
+# early initcalls waits forever (csd_lock_wait) -> flaky ~0.4s boot hang.
+# Bare WFI keeps the core coherent and IMSIC-wakeable, like the vendor.
+
+# ============================================================
+# Bluetooth — Realtek RTL8852B over USB (btusb) on the K3 Pico-ITX.
+# The controller enumerates on an already-enabled USB host port; only
+# the rfkill-gpio shutdown line is wired in DT (rfkill-usb-bt node).
+# BT_HCIBTUSB pulls btusb.ko + (hard select) btintel.ko; BT_HCIBTUSB_RTL
+# is default-y so it selects BT_RTL -> btrtl.ko (RTL8852B firmware/cfg).
+# CONFIG_BT and friends are already =m in gki_defconfig; btbcm.ko is GKI.
+# K3-only: harmless on K1 (no USB BT controller present).
+# ============================================================
+CONFIG_BT_HCIBTUSB=m
+CONFIG_BT_RTL=m
+
+# ============================================================
 # Audio
 # ============================================================
+# SND / SND_SOC core are already builtin (=y) in gki_defconfig — do NOT
+# re-declare them as =m here (merge_config last-wins would downgrade the
+# shared GKI core and regress K1). Only the SoC-specific drivers are new.
 CONFIG_SND_SOC_K1_I2S=m
 CONFIG_SND_SOC_ES8326=m
 CONFIG_SND_SIMPLE_CARD=m
+# K3 DP-audio: RI2S ASoC CPU DAI (ri2s3) -> inno-dp-audio codec, fed by
+# the K3 ADMA. K3-only: compat spacemit,k3-ri2s has no DT node on K1
+# boards, so snd-soc-k3-ri2s.ko stays idle there. SND_SOC_GENERIC_DMAENGINE_PCM
+# is selected by the driver (already pulled in by SND_SOC_K1_I2S above).
+CONFIG_SND_SOC_K3_RI2S=m
 
 # ============================================================
 # SoC drivers - Requires driver porting from Buildroot
@@ -260,6 +410,16 @@ CONFIG_SPACEMIT_SOCINFO=m
 # CONFIG_HW_RANDOM_SPACEMIT=m
 
 # ============================================================
+# KASLR — disabled for bring-up
+# ============================================================
+# Bring-up test: the K3 kernel goes silent at relocate_enable_mmu (MMU enable).
+# KASLR randomizes the kernel virtual base that relocate_enable_mmu switches to,
+# making it the prime suspect for the hang. The vendor BSP ships with KASLR off.
+# Disable randomization to isolate the relocate_enable_mmu hang (keep RELOCATABLE
+# as-is for now).
+# CONFIG_RANDOMIZE_BASE is not set
+
+# ============================================================
 # RTC - spacemit-p1 already in Android kernel
 # ============================================================
 CONFIG_RTC_DRV_SPACEMIT_P1=m
@@ -274,3 +434,35 @@ CONFIG_REGULATOR_SPACEMIT_P1=m
 # ============================================================
 CONFIG_POWER_RESET_SPACEMIT_K1X=m
 CONFIG_POWER_RESET_SPACEMIT_P1=m
+
+# ============================================================
+# DIAGNOSTIC (temporary — remove after root-cause confirmed)
+# ============================================================
+# K3 SoC drivers ported from the vendor BSP (batch)
+# tristate -> =m (GKI); bool-only drivers are forced =y.
+# HMP and K3_CPUFREQ are deliberately NOT enabled: they require
+# vendor core-kernel patches (task_struct::thread_type / cpufreq-dt
+# + opp core), which violates the no-core-patch policy.
+# ============================================================
+CONFIG_SPACEMIT_V2D=m
+CONFIG_SPACEMIT_POWERKEY_MONITOR=y
+CONFIG_SPACEMIT_REBOOT_CONTROL=y
+CONFIG_SPACEMIT_SUSPEND_AFFINITY=y
+CONFIG_SPACEMIT_MAILBOX=y
+CONFIG_K3_MAILBOX=y
+# remoteproc built-in (=y): k3-rproc references frozen() which is not exported
+# to modules, so it can't be =m without a core EXPORT_SYMBOL patch. Inert until
+# the RCPU mailbox/rproc/rsc-table DT nodes are added.
+CONFIG_SPACEMIT_K3_REMOTEPROC=y
+CONFIG_RPMSG_VIRTIO=y
+CONFIG_RISCV_IOMMU_SPACEMIT_K3=y
+# CONFIG_SPACEMIT_K1X_TIMER not enabled: redundant with the working riscv-timer
+# (sstc), and its probe path calls an __init function (section mismatch, a vendor
+# bug). Ported source left in-tree, disabled.
+CONFIG_K3_THERMAL=y
+# CONFIG_SPACEMIT_HDMA is deliberately NOT enabled: the vendor AI-DMA driver
+# exposes a userspace DMA interface (/dev/ai_dma etc., mode 0666) that translates
+# an arbitrary userspace-supplied PID+VA to a PA via manual PTE walk and programs
+# the DMA engine -- i.e. arbitrary physical-memory R/W from any process (CRITICAL).
+# Not needed for display/Android bring-up. Ported source left in-tree, disabled.
+# K3 VPU (linlon-v5) uses CONFIG_VIDEO_LINLON_K1X: same amvx driver, of_match already covers linlon-v5.
