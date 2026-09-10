@@ -284,26 +284,21 @@ CONFIG_PHY_SPACEMIT_K3_USB3=m
 CONFIG_TYPEC_FUSB301=m
 
 # ============================================================
-# GPU/DRM (module) - Ported from Buildroot
+# Display: the upstream SpacemiT K3 series (drm/spacemit)
 # ============================================================
+# The upstream driver claims the same two symbols the vendor stack used,
+# so these now select drivers/gpu/drm/spacemit/ from the series rather
+# than the vendor code that used to live there and in spacemit_k3/.
 CONFIG_DRM_SPACEMIT=m
-CONFIG_SPACEMIT_MIPI_PANEL=m
-CONFIG_SPACEMIT_HDMI=m
-CONFIG_DRM_LT8911EXB=m
-CONFIG_DRM_LT9711=m
-CONFIG_DRM_RASPBERRYPI_TOUCHSCREEN=m
-
-# ============================================================
-# K3 (saturn-hee) display — SEPARATE from the K1 spacemit-drm
-# stack above. Distinct hardware revision, built as its own
-# module(s); does not touch CONFIG_DRM_SPACEMIT / spacemit-drm.ko.
-# ============================================================
-CONFIG_DRM_SPACEMIT_K3=m
 CONFIG_SPACEMIT_INNO_DP=m
-# K3 DPU master + CRTC (scan-out) — builds spacemit-drm-k3.ko. Calls
-# component_bind_all() so the K3 DSI/DPHY/DP sub-drivers attach. No K3
-# pmdomain provider on this tree, so SPACEMIT_NI700 stays off (guarded).
-CONFIG_DRM_SPACEMIT_K3_DPU=m
+
+# The K1 vendor display stack lives on in drivers/gpu/drm/spacemit_vendor_k1/.
+# It kept the upstream driver's old directory and Kconfig symbol, so both were
+# renamed on its side: DRM_SPACEMIT_K1, module spacemit-drm-k1.ko.
+# (K1 vendor stack reverted: it collides on the platform driver name.)
+
+# The K3 vendor stack is gone for good, replaced by the upstream driver:
+#   CONFIG_DRM_SPACEMIT_K3, CONFIG_DRM_SPACEMIT_K3_DPU
 # IMG Rogue GPU driver - external module in devices/spacemit/modules/img-rogue/
 # CONFIG_DRM_POWERVR=m  <- upstream driver, NOT compatible with K1-X GPU
 # CONFIG_POWERVR_ROGUE will be built as external ddk_module
@@ -478,3 +473,19 @@ CONFIG_K3_THERMAL=y
 # runtime; without it an all-idle lull can drop a WFI hart out of IMSIC reach and
 # freeze the machine. Builtin by design: it must run before the first deep idle.
 CONFIG_SPACEMIT_K3_PMU_KEEPALIVE=y
+
+# DEBUG AID: /dev/drm_dp_auxN, to read and write the sink's DPCD from
+# userspace. The K3 DP audio investigation has no oracle otherwise -- every
+# source-side register reads correct and steady while an active DP->HDMI
+# converter drops audio, so the only remaining way to tell what is wrong is to
+# ask the sink.
+CONFIG_DRM_DISPLAY_DP_AUX_CHARDEV=y
+
+# DEBUG AID: /dev/mem, so devmem can read any physical register from userspace.
+# The K3 display investigation has eliminated the DP block and the DRM atomic
+# state by measurement; what is left is the DPU cmdlist and RDMA path, and no
+# driver exposes those. One line here beats a per-block poke interface.
+CONFIG_DEVMEM=y
+
+# K3 Innosilicon DisplayPort TX PHY (upstream series v2).
+CONFIG_PHY_SPACEMIT_K3_INNO_DP=m

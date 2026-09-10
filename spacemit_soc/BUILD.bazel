@@ -68,6 +68,7 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     # In vendor_boot so recovery has USB3 in first stage; dwc3 (generic-plat,
     # builtin) defers until this loads for the USB3 ports.
     "phy-k3-usb3.ko",
+    "phy-k3-inno-dp.ko",
     # FUSB301 Type-C DRP controller on i2c1 (K3 Pico-ITX USB-C, K3-only).
     "fusb301.ko",
     # RTC
@@ -81,13 +82,16 @@ SPACEMIT_VENDOR_BOOT_MODULES = [
     "spacemit_ddrbw.ko",
     # DRM stack — moved here so HDMI is up earlier (lets HwComposer / SF
     # start much sooner → bootanim has time to display).
-    "drm_dma_helper.ko",
     # fbdev client lib: spacemit-drm links against
     # drm_client_setup_with_color_mode, which lives here. Must be loaded
     # first stage, before spacemit-drm.
-    "drm_client_lib.ko",
+    # DP helpers the inno-dp bridge selects; they must precede it.
+    "drm_display_helper.ko",
+    "drm_dp_aux_bus.ko",
+    # The bridge registers as a component and spacemit-drm is the master
+    # that calls component_bind_all(), so the bridge loads first.
+    "spacemit-inno-dp.ko",
     "spacemit-drm.ko",
-    "spacemit_hdmi.ko",
 ]
 
 # ============================================================
@@ -105,28 +109,10 @@ SPACEMIT_VENDOR_DLKM_MODULES = [
     "spacemit-socinfo.ko",
     "spacemit-efuse.ko",
     "spacemit-k1x-reboot.ko",
-    # NOTE: drm_dma_helper / spacemit-drm / spacemit_hdmi /
-    # k1x-dma-range / spacemit_ddrbw moved to VENDOR_BOOT_MODULES so
-    # HDMI is ready early enough for SurfaceFlinger / bootanim to display.
-    "spacemit_mipi_panel.ko",
-    "lt8911exb.ko",
-    "lt9711.ko",
-    "raspberrypi_touchscreen.ko",
-    # K3 display (saturn-hee) DP/eDP — K3-only, no-op on K1 boards
-    # (no matching DT node), built separately from spacemit-drm.ko.
-    # DRM display helper + DP-AUX-bus must load before inno_dp.
-    "drm_display_helper.ko",
-    "drm_dp_aux_bus.ko",
-    # DRM fbdev client lib (pulled by DRM_CLIENT_SELECTION for the K3 DPU
-    # master's drm_client_setup/fbdev-dma). Must load before spacemit-drm-k3.
-    "drm_client_lib.ko",
-    # K3 DPU master + CRTC (scan-out). Registers the drm_device and calls
-    # component_bind_all(), so it must load AFTER its component sub-drivers
-    # (spacemit_inno_dp.ko) are registered. K3-only: of_match saturn-hee/
-    # saturn-edp + dpu-saturn, disjoint from the K1 spacemit-drm.ko, so it
-    # is a no-op on K1 boards (no matching DT node).
-    "spacemit_inno_dp.ko",
-    "spacemit-drm-k3.ko",
+    # The display stack (the DP helpers, spacemit-inno-dp and spacemit-drm)
+    # lives in VENDOR_BOOT_MODULES so the display is up early enough for
+    # SurfaceFlinger / bootanim. The GEM shmem helper is built into vmlinux
+    # here and fbdev emulation is off, so neither ships as a module.
     # Ethernet — Realtek RTL8211F PHY (+ PHY_PACKAGE dep) must load before
     # the MAC so the RTL8211F binds instead of the genphy fallback.
     "phy_package.ko",
@@ -226,10 +212,10 @@ SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
     # SoC + DRM stack moved from vendor_dlkm to vendor_boot
     "drivers/soc/spacemit/k1x-dma-range.ko",
     "drivers/soc/spacemit/ddr-bw/spacemit_ddrbw.ko",
-    "drivers/gpu/drm/drm_dma_helper.ko",
-    "drivers/gpu/drm/clients/drm_client_lib.ko",
+    "drivers/gpu/drm/display/drm_display_helper.ko",
+    "drivers/gpu/drm/display/drm_dp_aux_bus.ko",
+    "drivers/gpu/drm/spacemit/spacemit-inno-dp.ko",
     "drivers/gpu/drm/spacemit/spacemit-drm.ko",
-    "drivers/gpu/drm/spacemit/spacemit_hdmi.ko",
 ]
 
 # ============================================================
@@ -238,17 +224,8 @@ SPACEMIT_VENDOR_BOOT_MODULES_PATHS = [
 SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/dma/mmp_pdma.ko",
     "drivers/dma/adma-spacemit.ko",
-    # k1x-dma-range / spacemit_ddrbw / drm_dma_helper / spacemit-drm /
-    # spacemit_hdmi moved to VENDOR_BOOT_MODULES_PATHS for early load.
-    "drivers/gpu/drm/spacemit/spacemit_mipi_panel.ko",
-    "drivers/gpu/drm/spacemit/lt8911exb.ko",
-    "drivers/gpu/drm/spacemit/lt9711.ko",
-    "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
-    "drivers/gpu/drm/display/drm_display_helper.ko",
-    "drivers/gpu/drm/display/drm_dp_aux_bus.ko",
-    "drivers/gpu/drm/clients/drm_client_lib.ko",
-    "drivers/gpu/drm/spacemit_k3/spacemit_inno_dp.ko",
-    "drivers/gpu/drm/spacemit_k3/spacemit-drm-k3.ko",
+    # The display stack moved to VENDOR_BOOT_MODULES_PATHS for early load:
+    # k1x-dma-range, spacemit_ddrbw, the DP helpers, spacemit-inno-dp and spacemit-drm.
     "drivers/net/phy/phy_package.ko",
     "drivers/net/phy/realtek/realtek.ko",
     "drivers/net/ethernet/spacemit/k1_emac.ko",
@@ -278,6 +255,7 @@ SPACEMIT_VENDOR_DLKM_MODULES_PATHS = [
     "drivers/usb/misc/onboard_usb_dev.ko",
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
     "drivers/phy/spacemit/phy-k3-usb3.ko",
+    "drivers/phy/spacemit/phy-k3-inno-dp.ko",
     "drivers/usb/typec/fusb301.ko",
     "drivers/bluetooth/btintel.ko",
     "drivers/bluetooth/btrtl.ko",
@@ -345,21 +323,13 @@ SPACEMIT_IN_TREE_MODULES = [
     # Reboot - SoC boot-mode register (in addition to spacemit-p1 PMIC)
     "drivers/power/reset/spacemit-k1x-reboot.ko",
     # DRM
-    "drivers/gpu/drm/drm_dma_helper.ko",
     "drivers/gpu/drm/spacemit/spacemit-drm.ko",
-    "drivers/gpu/drm/spacemit/spacemit_mipi_panel.ko",
-    "drivers/gpu/drm/spacemit/spacemit_hdmi.ko",
-    "drivers/gpu/drm/spacemit/lt8911exb.ko",
-    "drivers/gpu/drm/spacemit/lt9711.ko",
-    "drivers/gpu/drm/spacemit/raspberrypi_touchscreen.ko",
+    "drivers/gpu/drm/spacemit/spacemit-inno-dp.ko",
     # K3 display (saturn-hee) — separate module tree, does not touch
     # the K1 spacemit-drm.ko above. The DP/eDP driver selects the GKI
     # DRM display + DP-AUX-bus helpers, which build as their own modules.
     "drivers/gpu/drm/display/drm_display_helper.ko",
     "drivers/gpu/drm/display/drm_dp_aux_bus.ko",
-    "drivers/gpu/drm/clients/drm_client_lib.ko",
-    "drivers/gpu/drm/spacemit_k3/spacemit_inno_dp.ko",
-    "drivers/gpu/drm/spacemit_k3/spacemit-drm-k3.ko",
     # Ethernet
     "drivers/net/ethernet/spacemit/k1_emac.ko",
     # K3 GMAC — STMMAC/DWMAC + Synopsys XPCS, CONFIG_DWMAC_SPACEMIT=m (K3-only)
@@ -414,6 +384,7 @@ SPACEMIT_IN_TREE_MODULES = [
     "drivers/usb/gadget/udc/k1x_udc_core.ko",
     # K3 USB3 combo PHY + Type-C orientation switch (K3-only)
     "drivers/phy/spacemit/phy-k3-usb3.ko",
+    "drivers/phy/spacemit/phy-k3-inno-dp.ko",
     # FUSB301 Type-C DRP controller (K3-only)
     "drivers/usb/typec/fusb301.ko",
     # Bluetooth — RTL8852B over USB (btusb + btintel hard-select + btrtl)
